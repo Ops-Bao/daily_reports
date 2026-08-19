@@ -146,6 +146,14 @@ class Report:
             "soir": self.cell(label, COL_SOIR),
         }
 
+    def wow_pct_row(self, label: str) -> dict:
+        """The per-service W-1 % sits immediately right of each service value:
+        col E (idx 4) for MIDI, col G (idx 6) for SOIR."""
+        return {
+            "midi": parse_pct(self.cell(label, COL_MIDI + 1)),
+            "soir": parse_pct(self.cell(label, COL_SOIR + 1)),
+        }
+
 
 # ---------------------------------------------------------------------------
 # Extraction
@@ -183,6 +191,9 @@ def extract(grid: list) -> dict:
             "take_away": r.count_row("NOMBRE TAKE AWAY"),
             "delivery": r.count_row("NOMBRE LIVRAISON"),
         },
+        "tm_ht_on_site": r.text_row("TM HT ON SITE"),
+        "top3": r.text_row("TOP 3"),
+        "ca_ht_wow_pct": r.wow_pct_row("CA HT"),
         "staff": {
             "manager": r.text_row("MANAGER:"),
             "pass_master": r.text_row("PASS MASTER:"),
@@ -202,6 +213,7 @@ def extract(grid: list) -> dict:
         "operations": {
             "reception_ok": r.text_row("RECEPTION DE MARCHANDISES - OK"),
             "reception_bad": r.text_row("RECEPTION DE MARCHANDISES - BAD"),
+            "reception_comments": r.text_row("RECEPTION DE MARCHANDISES - IF BAD, WHY"),
             "qualite_food": r.text_row("QUALITE FOOD"),
             "resa": r.text_row("#RESA"),
             "walkouts": r.text_row("#WALKOUTS"),
