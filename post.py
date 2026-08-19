@@ -1,150 +1,83 @@
 """
-Format the extracted report into a Slack message and post it.
+Flat per-service (MIDI / SOIR) digest formatter.
 
-Runs on top of extract_report.py. No LLM, no audio — just clean text to Slack.
-When ElevenLabs is ready later, generate the MP3 from `build_digest_text()` and
-attach it with files_upload; nothing else changes.
-
-Slack setup (once)
-------------------
-1. Create a Slack app at api.slack.com/apps (or reuse your existing one).
-2. Bot Token Scopes: chat:write, files:write (files:write only needed later
-   for audio/PDF upload).
-3. Install to workspace, copy the Bot User OAuth Token (xoxb-...).
-4. Invite the bot to the central channel: /invite @YourBot
-5. Set env vars: SLACK_BOT_TOKEN, SLACK_CENTRAL_CHANNEL (channel ID, e.g. C0123).
+One block per service with the exact fields requested. All figures pulled
+verbatim by the extractor. The GENERAL line currently passes the raw narrative
+through; later, an LLM can condense it to the one-line summary style — that is
+the ONLY place AI touches this, and it never sees or re-derives the numbers.
 """
 
-import os
-import json
-import urllib.request
-import urllib.error
+from extract_report import load_grid_from_csv, extract
 
-from extract_report import load_grid_from_csv, extract  # reuse the extractor
-
-
-# ---------------------------------------------------------------------------
-# Formatting
-# ---------------------------------------------------------------------------
 
 def _eur(v):
-    if v is None:
-        return "—"
-    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")  # 6 908,85 €
+    return "N/A" if v is None else f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-def _n(v):
-    return "—" if v is None else str(v)
+def _pct(v):
+    return "N/A" if v is None else f"{v:+.2f}%".replace(".", ",")
 
 
-def build_digest_text(data: dict) -> str:
-    """A compact, human-readable digest. This is also the future TTS input."""
-    m = data["meta"]
+def _txt(v):
+    v = (v or "").strip()
+    return v if v else "N/A"
+
+
+def format_service(data: dict, shift: str) -> str:
     fin = data["finance"]
-    cov = data["covers"]
-    staff = data["staff"]
-    ctx = data["context"]
-    ops = data["operations"]
 
-    ca = fin["ca_ttc"]
-    total_covers = cov["on_site"].get("total")
+    manager = _txt(data["staff"]["manager"][shift])
+    ca_ht = fin["ca_ht"][shift]
+    ca_ht_pct = data["ca_ht_wow_pct"][shift]
+    tm_on_site = _txt(data["tm_ht_on_site"][shift])
+    panier = fin["panier_outside"][shift]
+    top3 = _txt(data["top3"][shift])
+    general = _txt(data["narrative"]["general"][shift])
+    recep_ok = _txt(data["operations"]["reception_ok"][shift])
+    recep_bad = _txt(data["operations"]["reception_bad"][shift])
+    recep_comments = _txt(data["operations"]["reception_comments"][shift])
+    besoin = _txt(data["operations"]["besoin"][shift])
+    ruptures = _txt(data["operations"]["ruptures"][shift])
+    glitch = _txt(data["narrative"]["glitch"][shift])
 
-    lines = []
-    lines.append(f"*🍜 {m['restaurant']}* — {m['date']}")
-    lines.append("")
-    lines.append(f"* CA TTC* : {_eur(ca['total'])}  "
-                 f"(midi {_eur(ca['midi'])} · soir {_eur(ca['soir'])})")
-    if ca.get("pct_wow") is not None:
-        arrow = "🔺" if ca["pct_wow"] >= 0 else "🔻"
-        lines.append(f"   {arrow} {ca['pct_wow']:+.1f}% vs S-1  "
-                     f"· WTD {_eur(ca['wtd'])}")
-    lines.append("")
-    lines.append(f"*Couverts* : {_n(total_covers)} sur place  "
-                 f"· {_n(cov['take_away'].get('total'))} TA  "
-                 f"· {_n(cov['delivery'].get('total'))} livraison")
-    lines.append("")
-    lines.append(f"*Managers* : midi {staff['manager']['midi']} · "
-                 f"soir {staff['manager']['soir']}")
-    lines.append(f"*Météo* : midi {ctx['meteo']['midi']} · "
-                 f"soir {ctx['meteo']['soir']}")
+    if recep_ok != "N/A" and recep_bad != "N/A":
+        recep_status = f"OK: {recep_ok} | BAD: {recep_bad}"
+    elif recep_ok != "N/A":
+        recep_status = f"OK — {recep_ok}"
+    elif recep_bad != "N/A":
+        recep_status = f"BAD — {recep_bad}"
+    else:
+        recep_status = "N/A"
 
-    # only surface operational flags when non-empty
-    flags = []
-    for label, key in [("Glitch", "glitch")]:
-        g = data["narrative"].get(key, {})
-        for shift in ("midi", "soir"):
-            val = (g.get(shift) or "").strip()
-            if val and val.upper() not in {"RAS", "//"}:
-                flags.append(f"⚠️ {label} ({shift}) : {val}")
-    for label, key in [("Ruptures", "ruptures"), ("Besoin", "besoin")]:
-        o = ops.get(key, {})
-        for shift in ("midi", "soir"):
-            val = (o.get(shift) or "").strip()
-            if val and val.upper() not in {"RAS", "//"}:
-                flags.append(f"⚠️ {label} ({shift}) : {val}")
-    if flags:
-        lines.append("")
-        lines.extend(flags)
-
-    if data.get("_warnings"):
-        lines.append("")
-        lines.append("_⚙️ Alertes extraction : "
-                     + "; ".join(data["_warnings"]) + "_")
-
+    lines = [
+        f"*Service: {shift.upper()}*",
+        f"Responsable du site: {manager}",
+        f"GENERAL: {general}",
+        f"CA HT: {_eur(ca_ht)}",
+        f"CA HT W-1: {_pct(ca_ht_pct)}",
+        f"TM ON SITE: {tm_on_site}",
+        f"PANIER OUTSIDE: {_eur(panier)}",
+        f"TOP 3: {top3}",
+        f"MERCHANDISE RECEPTION STATUS: {recep_status}",
+        f"MERCH RECEPTION COMMENTS: {recep_comments}",
+        f"BESOINS: {besoin}",
+        f"RUPTURES: {ruptures}",
+        f"GLITCH: {glitch}",
+    ]
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Slack posting
-# ---------------------------------------------------------------------------
-
-def post_to_slack(text: str, channel: str, token: str) -> dict:
-    payload = json.dumps({
-        "channel": channel,
-        "text": text,
-        "unfurl_links": False,
-        "mrkdwn": True,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
-    with urllib.request.urlopen(req) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-    if not result.get("ok"):
-        raise RuntimeError(f"Slack error: {result.get('error')}")
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Orchestration — one run over all restaurants
-# ---------------------------------------------------------------------------
-
-# For live use, replace this with the 9 spreadsheet IDs and
-# load_grid_from_sheets(). For now it takes local CSV paths.
-def run(csv_paths: list, channel: str, token: str, dry_run: bool = False):
-    for path in csv_paths:
-        grid = load_grid_from_csv(path)
-        data = extract(grid)
-        text = build_digest_text(data)
-        if dry_run:
-            print("=" * 60)
-            print(text)
-        else:
-            post_to_slack(text, channel, token)
-            print(f"Posté: {data['meta']['restaurant']}")
+def build_message(data: dict) -> str:
+    header = f"🍜 *{data['meta']['restaurant']}* — {data['meta']['date']}"
+    return (header + "\n\n"
+            + format_service(data, "midi") + "\n\n"
+            + format_service(data, "soir"))
 
 
 if __name__ == "__main__":
     import sys
-    token = os.environ.get("SLACK_BOT_TOKEN", "")
-    channel = os.environ.get("SLACK_CENTRAL_CHANNEL", "")
-    paths = sys.argv[1:] or [
+    path = sys.argv[1] if len(sys.argv) > 1 else \
         "/mnt/user-data/uploads/2026_-_PBBy_Suivi_de_performance_-_Rapport_Jour_New.csv"
-    ]
-    # no token -> dry run so you can preview the message
-    run(paths, channel, token, dry_run=not (token and channel))
+    grid = load_grid_from_csv(path)
+    data = extract(grid)
+    print(build_message(data))
