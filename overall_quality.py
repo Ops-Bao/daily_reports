@@ -23,6 +23,44 @@ def _txt(v):
     return v if v else "N/A"
 
 
+# ---------------------------------------------------------------------------
+# OPTIONAL AI HOOK — GENERAL one-line summary
+# ---------------------------------------------------------------------------
+# When ready, uncomment and wire an API key. This feeds Claude the RAW narrative
+# plus the ALREADY-EXTRACTED CA figures so it condenses to one line WITHOUT ever
+# re-deriving numbers — it only rephrases prose. The numbers in the digest still
+# come from the extractor, never from the model.
+#
+# import os, json, urllib.request
+#
+# def summarize_general(raw_general: str, ca_ht_eur: str, ca_ht_pct: str) -> str:
+#     if not raw_general or raw_general.strip() in {"", "N/A", "RAS"}:
+#         return "N/A"
+#     prompt = (
+#         "Résume ce rapport de service en UNE phrase concise (français), "
+#         "en gardant le ton opérationnel. N'invente aucun chiffre. "
+#         f"Chiffres officiels à réutiliser tels quels si pertinent : "
+#         f"CA HT {ca_ht_eur}, variation vs S-1 {ca_ht_pct}.\n\n"
+#         f"Rapport brut :\n{raw_general}"
+#     )
+#     req = urllib.request.Request(
+#         "https://api.anthropic.com/v1/messages",
+#         data=json.dumps({
+#             "model": "claude-sonnet-5",
+#             "max_tokens": 200,
+#             "messages": [{"role": "user", "content": prompt}],
+#         }).encode("utf-8"),
+#         headers={
+#             "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+#             "anthropic-version": "2023-06-01",
+#             "content-type": "application/json",
+#         },
+#     )
+#     with urllib.request.urlopen(req) as resp:
+#         out = json.loads(resp.read())
+#     return "".join(b.get("text", "") for b in out["content"] if b["type"] == "text").strip()
+
+
 def format_service(data: dict, shift: str) -> str:
     fin = data["finance"]
 
@@ -33,6 +71,11 @@ def format_service(data: dict, shift: str) -> str:
     panier = fin["panier_outside"][shift]
     top3 = _txt(data["top3"][shift])
     general = _txt(data["narrative"]["general"][shift])
+    # To condense GENERAL via AI later, replace the line above with:
+    # general = summarize_general(
+    #     data["narrative"]["general"][shift],
+    #     _eur(ca_ht), _pct(ca_ht_pct),
+    # )
     recep_ok = _txt(data["operations"]["reception_ok"][shift])
     recep_bad = _txt(data["operations"]["reception_bad"][shift])
     recep_comments = _txt(data["operations"]["reception_comments"][shift])
