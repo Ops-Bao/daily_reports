@@ -38,14 +38,14 @@ FORWARDED = "white_check_mark"
 # Overridable with PDF_CHANNELS="PB=C0133HV2QSV,GB=GR3JU1HJ5,…" so you can
 # change routing without editing code.
 DEFAULT_CHANNELS = {
-    # "PB":   "C0133HV2QSV",   # #bf-managers-pb
-    # "PBSG": "C0B0Z8B5Z33",   # #bf-managers-pbsg
-    # "GB":   "GR3JU1HJ5",     # #bf-managers-gb
-    # "BB":   "C02TT6NHW8G",   # #bf-managers-bb
-    # "PBT":  "C09B7JZ5X6X",   # #bf-managers-pbt
-    # "FSD":  "C07CDE7L4HM",   # #bf-managers-pbfsd
-    # "GBM":  "C071BSC2T9A",   # #bf-managers-gbm
-    # "PBBy": "C0AHVRGLC3X",   # #bf-manager-pbby
+    "PB":   "C0133HV2QSV",   # #bf-managers-pb
+    "PBSG": "C0B0Z8B5Z33",   # #bf-managers-pbsg
+    "GB":   "GR3JU1HJ5",     # #bf-managers-gb
+    "BB":   "C02TT6NHW8G",   # #bf-managers-bb
+    "PBT":  "C09B7JZ5X6X",   # #bf-managers-pbt
+    "FSD":  "C07CDE7L4HM",   # #bf-managers-pbfsd
+    "GBM":  "C071BSC2T9A",   # #bf-managers-gbm
+    "PBBy": "C0AHVRGLC3X",   # #bf-manager-pbby
     "PBB":  "C04FSKASQF8",   # #bf-managers-be-office (Bastille, aka "BE")
 }
 
