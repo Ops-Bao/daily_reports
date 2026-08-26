@@ -47,6 +47,47 @@ def main():
     check("pct format", O._pct(-23.64), "-23,64%")
     check("none is N/A", O._eur(None), "N/A")
 
+
+    print("label drift tolerance")
+    from test_fixture import row as _row
+    g = [r[:] for r in GRID]
+    for r in g:
+        if r[2] == "PERTE":
+            r[2] = "PERTES"
+    dd = E.extract(g)
+    check("alias resolves and says so",
+          any("trouv" in w and "PERTE" in w for w in dd["_warnings"]), True)
+
+    g = [r[:] for r in GRID]
+    for r in g:
+        if r[2] == "GENERAL":
+            r[2] = "GENERAL (RESUME DU SERVICE)"
+    dd = E.extract(g)
+    check("prefix match still reads the value",
+          dd["narrative"]["general"]["midi"].startswith("Service à 2"), True)
+
+    g = [r for r in GRID if r[2] != "GLITCH"]
+    dd = E.extract(g)
+    check("a genuinely absent label still warns",
+          any("introuvable: 'GLITCH'" in w for w in dd["_warnings"]), True)
+
+    # Guessing between two plausible rows would put the wrong text in a digest,
+    # so ambiguity must fail loudly rather than pick the first hit.
+    g = [r[:] for r in GRID] + [_row("BESOIN URGENT", "x"), _row("BESOIN SECONDAIRE", "y")]
+    for r in g:
+        if r[2] == "BESOIN":
+            r[2] = "ZZZ"
+    dd = E.extract(g)
+    check("ambiguous prefix refuses to guess",
+          any("introuvable: 'BESOIN'" in w for w in dd["_warnings"]), True)
+
+    print("date targeting")
+    # The 7am run must ask for yesterday: today's sheet is either not rolled
+    # over yet, or rolled over with the evening service still open — in which
+    # case the SOIR cells read as negative, being computed as total minus midi.
+    check("default target is D-1", R.target_paris(),
+          R.today_paris() - dt.timedelta(days=1))
+
     print("digest assembly")
     target = dt.date(2026, 8, 25)
     results = [

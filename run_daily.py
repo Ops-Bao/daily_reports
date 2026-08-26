@@ -30,12 +30,23 @@ SEP = "\n\n———\n\n"
 
 OPS_DESTINATION = os.environ.get("OPS_DESTINATION", "C0A6VHL0CCF")   # #shortyshort
 FOOD_DESTINATION = os.environ.get("FOOD_DESTINATION", "U078L6FSV8T")  # Jisoo (DM)
-ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", "D09DX0909C3")
-TEST_DESTINATION = os.environ.get("TEST_DESTINATION", "C0BSV1E70E6") 
+ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", OPS_DESTINATION)
+
+
+# At 7am the completed report is YESTERDAY's — the evening service has to close
+# before the day's figures exist. Targeting today would either withhold every
+# sheet as "stale" (because it still shows yesterday) or, worse, publish a
+# half-finished day where the SOIR cells still read as negative because they are
+# computed as total minus midi.
+REPORT_OFFSET_DAYS = int(os.environ.get("REPORT_OFFSET_DAYS", "1"))
 
 
 def today_paris() -> dt.date:
     return dt.datetime.now(PARIS).date()
+
+
+def target_paris() -> dt.date:
+    return today_paris() - dt.timedelta(days=REPORT_OFFSET_DAYS)
 
 
 def fetch_location(service, loc, tab, target_date):
@@ -64,8 +75,8 @@ def fetch_location(service, loc, tab, target_date):
 def build_digests(results, target_date):
     """Return (ops_text, food_text) covering every location in one message each."""
     header_date = target_date.strftime("%d/%m/%Y")
-    ops_blocks = [f"*DAILY OPS CHECK-IN* — {header_date}"]
-    food_blocks = [f"*RAPPORT QUALITÉ FOOD* — {header_date}"]
+    ops_blocks = [f"📊 *DAILY OPS CHECK-IN* — {header_date}"]
+    food_blocks = [f"🥢 *RAPPORT QUALITÉ FOOD* — {header_date}"]
 
     missing = []
     posted = 0
@@ -118,7 +129,7 @@ def main() -> int:
     ap.add_argument("--only", help="Restrict to one restaurant code, e.g. PB.")
     args = ap.parse_args()
 
-    target_date = (dt.date.fromisoformat(args.date) if args.date else today_paris())
+    target_date = (dt.date.fromisoformat(args.date) if args.date else target_paris())
 
     locations, settings, service = config.load_config()
 
@@ -146,14 +157,14 @@ def main() -> int:
 
     ops_text, food_text = build_digests(results, target_date)
 
-    post_digest.post(TEST_DESTINATION, ops_text, dry_run=args.dry_run)
-    post_digest.post(TEST_DESTINATION, food_text, dry_run=args.dry_run)
+    post_digest.post(OPS_DESTINATION, ops_text, dry_run=args.dry_run)
+    post_digest.post(FOOD_DESTINATION, food_text, dry_run=args.dry_run)
 
     warnings = collect_warnings(results)
     if warnings and not args.dry_run:
         post_digest.post(
             ALERT_DESTINATION,
-            "*Digest posté, mais des libellés sont introuvables* — une ligne a "
+            "🔧 *Digest posté, mais des libellés sont introuvables* — une ligne a "
             "probablement été renommée ou déplacée :\n"
             + "\n".join(f"• {w}" for w in warnings),
         )

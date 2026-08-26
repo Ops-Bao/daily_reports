@@ -33,7 +33,15 @@ def main():
     check("override parses, whitespace tolerated",
           M.channels(), {"PB": "C111", "GB": "C222", "BB": "C333"})
     del os.environ["PDF_CHANNELS"]
-    check("falls back to defaults", M.channels()["PB"], "C0133HV2QSV")
+    # Compare against the map itself rather than a specific restaurant — you
+    # are meant to be able to comment restaurants out while testing without
+    # the test suite failing.
+    check("falls back to the built-in map", M.channels(), M.DEFAULT_CHANNELS)
+    check("every configured channel has an ID",
+          [c for c, v in M.channels().items() if not v], [])
+    if not M.channels():
+        print("  note  no restaurants are enabled in DEFAULT_CHANNELS — "
+              "collect will find nothing until you uncomment at least one.")
 
     print("only her words travel")
     reviewer = "U_REVIEWER"

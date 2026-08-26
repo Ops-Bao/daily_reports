@@ -76,6 +76,27 @@ def parse_pct(s: Optional[str]) -> Optional[float]:
     return float(s) if m else None
 
 
+# Known wording differences between the nine sheets. Keys are the canonical
+# label (already normalised); values are what other sheets call the same row.
+# Add to this whenever a "Libellé trouvé sous…" warning tells you a new one.
+ALIASES = {
+    "PERTE": ("PERTES", "MONTANT PERTES", "PERTE - ZELTY", "PERTES - ZELTY"),
+    "REMISE": ("REMISES", "MONTANT REMISE"),
+    "GENERAL": ("GENERAL RAPPORT", "RAPPORT GENERAL", "COMMENTAIRE GENERAL",
+                "COMMENTAIRES GENERAUX", "RESUME"),
+    "BESOIN": ("BESOINS",),
+    "RUPTURES FOOD & DRINKS": ("RUPTURES", "RUPTURES FOOD ET DRINKS",
+                               "RUPTURE FOOD & DRINKS"),
+    "QUALITE FOOD": ("QUALITE PRODUIT", "QUALITE DES PRODUITS"),
+    "RECEPTION DE MARCHANDISES - IF BAD, WHY": (
+        "RECEPTION DE MARCHANDISES - SI BAD, POURQUOI",
+        "RECEPTION DE MARCHANDISES - WHY",
+    ),
+    "TM HT ON SITE": ("TM HT ONSITE", "TM ON SITE"),
+    "COUVERTS ON SITE": ("COUVERTS ONSITE", "COUVERTS"),
+}
+
+
 def _parse_fr_date(s: Optional[str]) -> Optional[str]:
     """'25/08/2026' -> '2026-08-25'. Returns None if unparseable.
 
@@ -124,19 +145,45 @@ class Report:
                 if lab:
                     self._label_rows.setdefault(lab, []).append(i)
 
+    def _find(self, label: str) -> list:
+        """Resolve a label to row indices, tolerating small per-sheet wording
+        differences.
+
+        Nine sheets maintained by nine teams drift: one writes 'PERTES', another
+        'COMMENTAIRE GENERAL'. Rather than fail on every variant, try the exact
+        label, then known aliases, then a prefix match — and only warn if all
+        three miss. The warning still fires, so drift stays visible instead of
+        silently becoming N/A.
+        """
+        want = _norm_label(label)
+        if want in self._label_rows:
+            return self._label_rows[want]
+
+        for alt in ALIASES.get(want, ()):
+            alt_n = _norm_label(alt)
+            if alt_n in self._label_rows:
+                self._warnings.append(f"Libellé {label!r} trouvé sous {alt!r}")
+                return self._label_rows[alt_n]
+
+        # Prefix match: 'GENERAL' should still find 'GENERAL (RESUME)'. Require
+        # a word boundary so 'PERTE' cannot silently match 'PERTES CLIENTS' —
+        # actually that IS the intent; what it must not do is match a different
+        # concept, so keep the prefix anchored at the start.
+        hits = [rows for lab, rows in self._label_rows.items()
+                if lab.startswith(want + " ") or lab == want]
+        if len(hits) == 1:
+            self._warnings.append(f"Libellé {label!r} trouvé par préfixe")
+            return hits[0]
+
+        self._warnings.append(f"Label introuvable: {label!r}")
+        return []
+
     def _rows(self, label: str) -> list:
-        idxs = self._label_rows.get(_norm_label(label))
-        if not idxs:
-            self._warnings.append(f"Label introuvable: {label!r}")
-            return []
-        return [self.grid[i] for i in idxs]
+        return [self.grid[i] for i in self._find(label)]
 
     def _row(self, label: str) -> Optional[list]:
-        idxs = self._label_rows.get(_norm_label(label))
-        if not idxs:
-            self._warnings.append(f"Label introuvable: {label!r}")
-            return None
-        return self.grid[idxs[0]]
+        idxs = self._find(label)
+        return self.grid[idxs[0]] if idxs else None
 
     def cell(self, label: str, col: int) -> Optional[str]:
         row = self._row(label)

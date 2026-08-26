@@ -1,0 +1,89 @@
+name: PDF review loop
+
+on:
+  schedule:
+    # Collect last night's PDFs and send them to the reviewer, just after the
+    # digest. Same DST trick as daily-digest: fire twice, let the job decide.
+    - cron: "10 5 * * *"
+    - cron: "10 6 * * *"
+    # Forward her comments back to the restaurants. Every 15 minutes during
+    # working hours only — there is nobody commenting at 3am, and an idle run
+    # still costs a minute of Actions time.
+    - cron: "*/15 6-19 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to run"
+        type: choice
+        options: [route, collect]
+        default: route
+      dry_run:
+        description: "Show what would happen without sending anything"
+        type: boolean
+        default: true
+      hours:
+        description: "How far back to look (collect: 24 default, route: 72)"
+        type: string
+        default: ""
+
+concurrency:
+  # Two overlapping route runs could both try to claim the same reply.
+  group: pdf-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Decide mode
+        id: m
+        env:
+          CRON: ${{ github.event.schedule }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+            echo "dry=${{ inputs.dry_run && '--dry-run' || '' }}" >> "$GITHUB_OUTPUT"
+            echo "hours=${{ inputs.hours && format('--hours {0}', inputs.hours) || '' }}" >> "$GITHUB_OUTPUT"
+          elif [ "$CRON" = "*/15 6-19 * * *" ]; then
+            echo "mode=route" >> "$GITHUB_OUTPUT"
+            echo "dry=" >> "$GITHUB_OUTPUT"
+            echo "hours=" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=collect" >> "$GITHUB_OUTPUT"
+            echo "dry=" >> "$GITHUB_OUTPUT"
+            echo "hours=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The 05:10 and 06:10 crons both fire year-round; only one of them is
+      # 07:10 in Paris. Skipping is a normal outcome, so it must not show up in
+      # the Actions list as a failed run — hence a flag, not a non-zero exit.
+      - name: Is this the right hour?
+        id: hour
+        run: |
+          if [ "${{ steps.m.outputs.mode }}" = "collect" ] && \
+             [ "${{ github.event_name }}" = "schedule" ] && \
+             [ "$(TZ=Europe/Paris date +%H)" != "07" ]; then
+            echo "Paris hour $(TZ=Europe/Paris date +%H) — the other cron handles this."
+            echo "go=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run
+        if: steps.hour.outputs.go == 'yes'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          REVIEWER_ID: ${{ vars.REVIEWER_ID }}
+          ALERT_DESTINATION: ${{ vars.ALERT_DESTINATION }}
+          PDF_CHANNELS: ${{ vars.PDF_CHANNELS }}
+        run: python mirror_pdfs.py ${{ steps.m.outputs.mode }} ${{ steps.m.outputs.dry }} ${{ steps.m.outputs.hours }}
