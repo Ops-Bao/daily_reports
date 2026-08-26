@@ -1,0 +1,59 @@
+name: Daily digest
+
+on:
+  schedule:
+    # GitHub cron is UTC and has no timezone support, so 7am Paris is two
+    # different UTC times across the year. We fire at both and let --check-hour
+    # make the wrong one exit immediately — cheaper and less error-prone than
+    # editing the cron twice a year and forgetting.
+    - cron: "0 5 * * *"   # 07:00 Paris during CEST (summer)
+    - cron: "0 6 * * *"   # 07:00 Paris during CET  (winter)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the digests instead of posting to Slack"
+        type: boolean
+        default: true
+      date:
+        description: "Target date (YYYY-MM-DD), blank = today"
+        type: string
+        default: ""
+
+concurrency:
+  # Both crons can overlap near a DST switch; never let two runs post twice.
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Fail before posting rather than after. If someone's edit broke the
+      # extractor, a silent N/A-filled digest is worse than no digest.
+      - name: Self-test
+        run: |
+          python test_extract.py
+          python test_mirror.py
+
+      - name: Run digest
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          OPS_DESTINATION: ${{ vars.OPS_DESTINATION }}
+          FOOD_DESTINATION: ${{ vars.FOOD_DESTINATION }}
+          ALERT_DESTINATION: ${{ vars.ALERT_DESTINATION }}
+        run: |
+          python run_daily.py \
+            ${{ github.event_name == 'schedule' && '--check-hour' || '' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
