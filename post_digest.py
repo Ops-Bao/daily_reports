@@ -55,7 +55,7 @@ def post(destination: str, text: str, dry_run: bool = False) -> list:
         return []
     tss = []
     for i, chunk in enumerate(_split(text)):
-        body = slack_api.call("app.client.chat_postMessage", {
+        body = slack_api.call("chat.postMessage", {
             "channel": destination,
             "text": chunk,
             "unfurl_links": False,
