@@ -30,7 +30,8 @@ SEP = "\n\n———\n\n"
 
 OPS_DESTINATION = os.environ.get("OPS_DESTINATION", "C0A6VHL0CCF")   # #shortyshort
 FOOD_DESTINATION = os.environ.get("FOOD_DESTINATION", "U078L6FSV8T")  # Jisoo (DM)
-ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", OPS_DESTINATION)
+ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", "D09DX0909C3")
+TEST_DESTINATION = os.environ.get("TEST_DESTINATION", "C0BSV1E70E6") 
 
 
 def today_paris() -> dt.date:
@@ -145,8 +146,8 @@ def main() -> int:
 
     ops_text, food_text = build_digests(results, target_date)
 
-    post_digest.post(OPS_DESTINATION, ops_text, dry_run=args.dry_run)
-    post_digest.post(FOOD_DESTINATION, food_text, dry_run=args.dry_run)
+    post_digest.post(TEST_DESTINATION, ops_text, dry_run=args.dry_run)
+    post_digest.post(TEST_DESTINATION, food_text, dry_run=args.dry_run)
 
     warnings = collect_warnings(results)
     if warnings and not args.dry_run:
