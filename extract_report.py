@@ -76,6 +76,20 @@ def parse_pct(s: Optional[str]) -> Optional[float]:
     return float(s) if m else None
 
 
+def _parse_fr_date(s: Optional[str]) -> Optional[str]:
+    """'25/08/2026' -> '2026-08-25'. Returns None if unparseable.
+
+    Used for the staleness guard: if the sheet's date is not today, the
+    manager never updated it and we must not post yesterday's numbers.
+    """
+    s = _clean(s)
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+    if not m:
+        return None
+    d, mo, y = m.groups()
+    return f"{y}-{int(mo):02d}-{int(d):02d}"
+
+
 def _norm_label(s: str) -> str:
     """Normalise a label for matching: strip accents, upper, collapse spaces."""
     s = _clean(s)
@@ -100,20 +114,29 @@ class Report:
     def __init__(self, grid: list):
         self.grid = grid
         self._warnings = []
-        # map normalised label -> row index (first occurrence)
+        # map normalised label -> ALL row indices carrying that label.
+        # Some labels legitimately repeat (TOP 3 spans three rows), so keeping
+        # only the first occurrence silently drops data.
         self._label_rows = {}
         for i, row in enumerate(grid):
             if len(row) > COL_LABEL:
                 lab = _norm_label(row[COL_LABEL])
-                if lab and lab not in self._label_rows:
-                    self._label_rows[lab] = i
+                if lab:
+                    self._label_rows.setdefault(lab, []).append(i)
+
+    def _rows(self, label: str) -> list:
+        idxs = self._label_rows.get(_norm_label(label))
+        if not idxs:
+            self._warnings.append(f"Label introuvable: {label!r}")
+            return []
+        return [self.grid[i] for i in idxs]
 
     def _row(self, label: str) -> Optional[list]:
-        idx = self._label_rows.get(_norm_label(label))
-        if idx is None:
+        idxs = self._label_rows.get(_norm_label(label))
+        if not idxs:
             self._warnings.append(f"Label introuvable: {label!r}")
             return None
-        return self.grid[idx]
+        return self.grid[idxs[0]]
 
     def cell(self, label: str, col: int) -> Optional[str]:
         row = self._row(label)
@@ -146,6 +169,15 @@ class Report:
             "soir": self.cell(label, COL_SOIR),
         }
 
+    def text_row_multi(self, label: str, sep: str = " • ") -> dict:
+        """Join every row carrying this label (TOP 3 occupies three rows)."""
+        rows = self._rows(label)
+        out = {}
+        for shift, col in (("midi", COL_MIDI), ("soir", COL_SOIR)):
+            vals = [_clean(r[col]) for r in rows if len(r) > col and _clean(r[col])]
+            out[shift] = sep.join(vals)
+        return out
+
     def wow_pct_row(self, label: str) -> dict:
         """The per-service W-1 % sits immediately right of each service value:
         col E (idx 4) for MIDI, col G (idx 6) for SOIR."""
@@ -174,6 +206,7 @@ def extract(grid: list) -> dict:
         "meta": {
             "restaurant": restaurant,
             "date": date_raw,
+            "date_iso": _parse_fr_date(date_raw),
         },
         "finance": {
             "ca_ttc": r.money_row("CA TTC"),
@@ -192,7 +225,7 @@ def extract(grid: list) -> dict:
             "delivery": r.count_row("NOMBRE LIVRAISON"),
         },
         "tm_ht_on_site": r.text_row("TM HT ON SITE"),
-        "top3": r.text_row("TOP 3"),
+        "top3": r.text_row_multi("TOP 3"),
         "ca_ht_wow_pct": r.wow_pct_row("CA HT"),
         "staff": {
             "manager": r.text_row("MANAGER:"),
@@ -229,21 +262,25 @@ def extract(grid: list) -> dict:
 # Live Sheets stub (fill in when wiring to Google API)
 # ---------------------------------------------------------------------------
 
-def load_grid_from_sheets(spreadsheet_id: str, tab: str, creds) -> list:
-    """
-    Return the same list-of-lists grid as load_grid_from_csv, from a live sheet.
-    Uses the Sheets API values.get with a wide range so column indices line up.
+def load_grid_from_sheets(spreadsheet_id: str, tab: str, service) -> list:
+    """Return the same list-of-lists grid as load_grid_from_csv, from a live sheet.
 
-        from googleapiclient.discovery import build
-        svc = build("sheets", "v4", credentials=creds)
-        resp = svc.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{tab}'!A1:M60",
-            valueRenderOption="FORMATTED_VALUE",   # keep '2 464,40 €' as displayed
-        ).execute()
-        return resp.get("values", [])
+    FORMATTED_VALUE is deliberate: it hands back '2 464,40 €' exactly as the
+    manager sees it, which is what the French parsers above expect. Switching to
+    UNFORMATTED_VALUE would return raw floats and silently change parsing.
+
+    The API right-trims rows, so a row ending in blanks comes back short. We pad
+    every row to a fixed width, otherwise `len(row) <= col` checks turn a real
+    empty cell into a missing-label warning.
     """
-    raise NotImplementedError("Wire up Google Sheets API here.")
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{tab}'!A1:M80",
+        valueRenderOption="FORMATTED_VALUE",
+    ).execute()
+    rows = resp.get("values", [])
+    width = 13  # columns A..M
+    return [list(r) + [""] * (width - len(r)) for r in rows]
 
 
 if __name__ == "__main__":
