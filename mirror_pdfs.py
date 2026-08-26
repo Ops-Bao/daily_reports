@@ -30,7 +30,7 @@ import slack_api
 
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
 
-REVIEWER_ID = os.environ.get("REVIEWER_ID", "")
+REVIEWER_ID = os.environ.get("ALERT_DESTINATION", "")
 ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", "")
 FORWARDED = "white_check_mark"
 
