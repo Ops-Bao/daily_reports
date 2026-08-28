@@ -28,9 +28,9 @@ import post_digest
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
 SEP = "\n\n———\n\n"
 
-OPS_DESTINATION = os.environ.get("TEST_DESTINATION")   # #shortyshort
-FOOD_DESTINATION = os.environ.get("TEST_DESTINATION")  # Jisoo (DM)
-ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", OPS_DESTINATION)
+OPS_DESTINATION = os.environ.get("OPS_DESTINATION")   # #shortyshort
+FOOD_DESTINATION = os.environ.get("FOOD_DESTINATION")  # Jisoo (DM)
+ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION") # me
 
 
 # At 7am the completed report is YESTERDAY's — the evening service has to close
