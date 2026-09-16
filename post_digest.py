@@ -11,7 +11,6 @@ ops digest is worse than two messages.
 import time
 
 import slack_api
-from slack_api import SlackError  # re-exported for callers
 
 # Slack's hard limit is 40000 chars; stay well under so we never test the edge.
 MAX_CHARS = 30000

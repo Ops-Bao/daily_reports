@@ -2,8 +2,10 @@
 Orchestrator — the thing the scheduler actually runs.
 
 Flow: read the Control Panel → pull each included restaurant's report tab →
-extract deterministically → build the two digests → post them to Slack → write a
-line back to the Control Panel's log tab.
+extract deterministically → build the two digests → post them to Slack.
+
+Nothing is persisted: the extracted data exists only in memory for this run and
+its sole output is the two Slack messages (plus alerts).
 
 Guiding rule: one restaurant must never be able to take down the morning. A sheet
 that is unreachable, unfilled, or stale becomes a visible line inside the digest

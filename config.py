@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# Read-only: nothing in this repo writes to a sheet, and the service account is
+# shared as Viewer anyway.
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 CONTROL_PANEL_ID = os.environ.get(
     "CONTROL_PANEL_ID", "1-8ep5svVmINDD0pzp4BciRai0zYsnlSXiZCzeO0ZSwU"

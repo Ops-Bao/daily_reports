@@ -7,9 +7,6 @@ through; later, an LLM can condense it to the one-line summary style — that is
 the ONLY place AI touches this, and it never sees or re-derives the numbers.
 """
 
-from extract_report import load_grid_from_csv, extract
-
-
 def _eur(v):
     return "N/A" if v is None else f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
@@ -116,11 +113,3 @@ def build_message(data: dict) -> str:
             + format_service(data, "midi") + "\n\n"
             + format_service(data, "soir"))
 
-
-if __name__ == "__main__":
-    import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else \
-        "/mnt/user-data/uploads/2026_-_PBBy_Suivi_de_performance_-_Rapport_Jour_New.csv"
-    grid = load_grid_from_csv(path)
-    data = extract(grid)
-    print(build_message(data))

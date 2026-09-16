@@ -12,9 +12,6 @@ food-quality-relevant content. Same principle as the GENERAL summary: the model
 only reads/filters prose — there are no numbers to protect here.
 """
 
-from extract_report import load_grid_from_csv, extract
-
-
 # Fields to scan for food-quality signal, in display order.
 # key path within the extracted `data` dict -> display label
 SCAN_FIELDS = [
@@ -117,11 +114,3 @@ def build_food_report(data: dict) -> str:
             + format_food_quality(data, "midi") + "\n\n"
             + format_food_quality(data, "soir"))
 
-
-if __name__ == "__main__":
-    import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else \
-        "/mnt/user-data/uploads/2026_-_PBBy_Suivi_de_performance_-_Rapport_Jour_New.csv"
-    grid = load_grid_from_csv(path)
-    data = extract(grid)
-    print(build_food_report(data))

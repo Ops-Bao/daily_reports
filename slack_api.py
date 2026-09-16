@@ -83,8 +83,8 @@ def upload_file(channel: str, filename: str, data: bytes,
                 thread_ts: str = None) -> dict:
     """Upload bytes to a channel or DM using Slack's three-step external flow.
 
-    files.upload was retired; the replacement is: ask for a URL, PUT the bytes
-    there, then tell Slack to attach the finished file to a conversation.
+    files.upload was retired; the replacement is: ask for an upload URL, POST
+    the bytes there, then tell Slack to attach the finished file to a conversation.
     """
     up = call("files.getUploadURLExternal",
               {"filename": filename, "length": len(data)}, get=True)

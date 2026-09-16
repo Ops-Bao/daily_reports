@@ -2,7 +2,7 @@
 
 These exist because the failure mode of a label-based extractor is silent: a
 renamed or moved row starts returning N/A and the digest keeps going out looking
-plausible. Run with `python test_extract.py` (no pytest needed).
+plausible. Run from the repo root with `python -m tests.test_extract` (no pytest needed).
 """
 
 import datetime as dt

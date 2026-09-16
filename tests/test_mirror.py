@@ -2,7 +2,7 @@
 
 The two things that would hurt if they broke: losing the link between a mirrored
 PDF and its original message, and forwarding a message that shouldn't travel.
-Run with `python test_mirror.py`.
+Run from the repo root with `python -m tests.test_mirror`.
 """
 
 import os

@@ -1,7 +1,11 @@
 # Daily digest pipeline
 
 Two Slack digests every morning at 7:00 Paris, built from the 9 restaurant
-shift-report sheets.
+shift-report sheets. The digest covers **yesterday** (the last closed day).
+
+Nothing is stored: each sheet is read live, turned into a dict in memory,
+formatted, posted to Slack and discarded. The Slack messages are the only
+record.
 
 - **Ops digest** → `#shortyshort` (`C0A6VHL0CCF`)
 - **Food-quality digest** → DM to Jisoo (`U078L6FSV8T`)
@@ -91,6 +95,9 @@ discovered by content, so renaming a Control Panel tab won't break anything.
 
 **Test one restaurant** — locally: `python run_daily.py --only PB --dry-run`
 
+**Run the self-tests** — from the repo root: `python -m tests.test_extract` and
+`python -m tests.test_mirror`. Both workflows run them before doing anything.
+
 ### Scheduling and DST
 
 GitHub cron is UTC only, so the workflow fires at both 05:00 and 06:00 UTC and
@@ -104,7 +111,7 @@ earlier rather than expecting the minute to be exact.
 | Situation | What happens |
 |---|---|
 | One sheet unreachable | `⚠️ NAME — error…` line in both digests; rest posts normally |
-| Sheet date isn't today | `⚠️ NAME — la feuille indique 24/08/2026`; **numbers are not posted** |
+| Sheet date isn't the target day (D-1) | `⚠️ NAME — la feuille indique 24/08/2026`; **numbers are not posted** |
 | A row was renamed in a sheet | Digest posts; a separate 🔧 alert lists the missing labels |
 | The whole job crashes | 🚨 alert with the traceback, so silence never means "all fine" |
 
@@ -126,8 +133,11 @@ carries her comments back.
 `mirror_pdfs.py collect` — runs at 07:10, gathers the last 24h of PDFs and DMs
 one per restaurant to `REVIEWER_ID`, each with a permalink to the original.
 
-`mirror_pdfs.py route` — runs every 15 minutes, 06:00–19:00. Forwards her thread
-replies into the origin channel as replies under the manager's own PDF message.
+`mirror_pdfs.py route` — runs on the third cron in `pdf-review.yml` (currently
+every 5 minutes, 07:00–11:59 UTC). Forwards her thread replies into the origin
+channel as replies under the manager's own PDF message. Change that cron line
+freely: anything that isn't one of the two `10 5`/`10 6` collect crons is
+treated as a route tick.
 
 ### No server and no database
 

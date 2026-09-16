@@ -6,9 +6,9 @@ on:
     # digest. Same DST trick as daily-digest: fire twice, let the job decide.
     - cron: "10 5 * * *"
     - cron: "10 6 * * *"
-    # Forward her comments back to the restaurants. Every 15 minutes during
-    # working hours only — there is nobody commenting at 3am, and an idle run
-    # still costs a minute of Actions time.
+    # Forward her comments back to the restaurants. Any schedule that is not
+    # one of the two collect crons above is treated as a route tick, so this
+    # line can be changed freely without touching the "Decide mode" step.
     - cron: "*/5 7-11 * * *"
   workflow_dispatch:
     inputs:
@@ -41,6 +41,9 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      - name: Self-test
+        run: python -m tests.test_mirror
+
       - name: Decide mode
         id: m
         env:
@@ -49,11 +52,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
             echo "dry=${{ inputs.dry_run && '--dry-run' || '' }}" >> "$GITHUB_OUTPUT"
-          elif [ "$CRON" = "*/15 6-19 * * *" ]; then
-            echo "mode=route" >> "$GITHUB_OUTPUT"
+          elif [ "$CRON" = "10 5 * * *" ] || [ "$CRON" = "10 6 * * *" ]; then
+            echo "mode=collect" >> "$GITHUB_OUTPUT"
             echo "dry=" >> "$GITHUB_OUTPUT"
           else
-            echo "mode=collect" >> "$GITHUB_OUTPUT"
+            echo "mode=route" >> "$GITHUB_OUTPUT"
             echo "dry=" >> "$GITHUB_OUTPUT"
           fi
 

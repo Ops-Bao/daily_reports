@@ -11,16 +11,11 @@ Design principles
 - Fail loud, not silent. If a required label is missing, we record it in
   `_warnings` rather than guessing.
 
-Swapping to live Google Sheets
-------------------------------
-`load_grid_from_csv()` returns a list-of-lists grid. Replace it with
-`load_grid_from_sheets()` (stub at bottom) which returns the same shape from the
-Sheets API. Everything downstream is identical.
+`load_grid_from_sheets()` (bottom of file) returns a list-of-lists grid from the
+Sheets API; `extract()` turns that grid into a plain dict. Nothing here writes
+anywhere — the dict lives only for the duration of one run.
 """
 
-import csv
-import io
-import json
 import re
 import unicodedata
 from typing import Optional
@@ -120,15 +115,6 @@ def _norm_label(s: str) -> str:
     return s
 
 
-# ---------------------------------------------------------------------------
-# Grid loading
-# ---------------------------------------------------------------------------
-
-def load_grid_from_csv(path: str) -> list:
-    with open(path, "r", encoding="utf-8") as f:
-        return list(csv.reader(f))
-
-
 class Report:
     """Label-indexed view over the grid."""
 
@@ -165,10 +151,9 @@ class Report:
                 self._warnings.append(f"Libellé {label!r} trouvé sous {alt!r}")
                 return self._label_rows[alt_n]
 
-        # Prefix match: 'GENERAL' should still find 'GENERAL (RESUME)'. Require
-        # a word boundary so 'PERTE' cannot silently match 'PERTES CLIENTS' —
-        # actually that IS the intent; what it must not do is match a different
-        # concept, so keep the prefix anchored at the start.
+        # Prefix match on a word boundary: 'GENERAL' still finds
+        # 'GENERAL (RESUME)', but 'PERTE' cannot match 'PERTES CLIENTS'.
+        # Accept only an unambiguous single hit; two candidates means guessing.
         hits = [rows for lab, rows in self._label_rows.items()
                 if lab.startswith(want + " ") or lab == want]
         if len(hits) == 1:
@@ -306,11 +291,11 @@ def extract(grid: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Live Sheets stub (fill in when wiring to Google API)
+# Live Sheets loader
 # ---------------------------------------------------------------------------
 
 def load_grid_from_sheets(spreadsheet_id: str, tab: str, service) -> list:
-    """Return the same list-of-lists grid as load_grid_from_csv, from a live sheet.
+    """Return the report tab as a list-of-lists grid.
 
     FORMATTED_VALUE is deliberate: it hands back '2 464,40 €' exactly as the
     manager sees it, which is what the French parsers above expect. Switching to
@@ -329,11 +314,3 @@ def load_grid_from_sheets(spreadsheet_id: str, tab: str, service) -> list:
     width = 13  # columns A..M
     return [list(r) + [""] * (width - len(r)) for r in rows]
 
-
-if __name__ == "__main__":
-    import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else \
-        "/mnt/user-data/uploads/2026_-_PBBy_Suivi_de_performance_-_Rapport_Jour_New.csv"
-    grid = load_grid_from_csv(path)
-    result = extract(grid)
-    print(json.dumps(result, ensure_ascii=False, indent=2))

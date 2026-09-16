@@ -25,7 +25,6 @@ import sys
 import traceback
 import zoneinfo
 
-import config
 import slack_api
 
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
@@ -107,9 +106,13 @@ def collect(since_hours: int, dry_run: bool = False) -> list:
         # re-upload by the manager supersedes their earlier attempt.
         msg, f = pdfs[0]
         posted = dt.datetime.fromtimestamp(float(msg["ts"]), PARIS)
+        # Managers drop the PDF between ~23:45 and ~00:30. A file posted just
+        # after midnight is still last night's service, so label it with the
+        # previous day rather than the upload date.
+        report_day = posted.date() - dt.timedelta(days=1 if posted.hour < 12 else 0)
         link = slack_api.permalink(channel, msg["ts"])
         caption = (
-            f"*{code}* — rapport du {posted:%d/%m/%Y} "
+            f"*{code}* — rapport du {report_day:%d/%m/%Y} "
             f"(déposé à {posted:%H:%M})\n"
             f"Répondez dans ce fil : votre commentaire sera publié sous le "
             f"rapport d'origine.\n{link}"
@@ -123,7 +126,7 @@ def collect(since_hours: int, dry_run: bool = False) -> list:
         data = slack_api.download_file(f["url_private_download"])
         slack_api.upload_file(
             dm, f.get("name") or f"{code}.pdf", data,
-            title=f"{code} — {posted:%d/%m/%Y}",
+            title=f"{code} — {report_day:%d/%m/%Y}",
             initial_comment=caption,
         )
         print(f"  {code:5s} sent ({len(data)//1024} KB)")
