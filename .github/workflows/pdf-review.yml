@@ -9,7 +9,7 @@ on:
     # Forward her comments back to the restaurants. Every 15 minutes during
     # working hours only — there is nobody commenting at 3am, and an idle run
     # still costs a minute of Actions time.
-    - cron: "*/15 6-19 * * *"
+    - cron: "*/5 7-11 * * *"
   workflow_dispatch:
     inputs:
       mode:
