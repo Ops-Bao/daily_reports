@@ -12,7 +12,7 @@ import food_quality as F
 import overall_quality as O
 import run_daily as R
 from config import Location
-from test_fixture import GRID
+from tests.test_fixture import GRID
 
 
 def check(name, actual, expected):
@@ -49,7 +49,7 @@ def main():
 
 
     print("label drift tolerance")
-    from test_fixture import row as _row
+    from tests.test_fixture import row as _row
     g = [r[:] for r in GRID]
     for r in g:
         if r[2] == "PERTE":
