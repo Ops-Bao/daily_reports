@@ -155,9 +155,8 @@ The bot must be `/invite`d into **all nine manager channels** — they're privat
 | `REVIEWER_ID` | the reviewer's Slack user ID (`U…`) |
 | `PDF_CHANNELS` | optional override, e.g. `PB=C0133HV2QSV,GB=GR3JU1HJ5,…` |
 
-Channel IDs for eight of the nine restaurants are already filled in as defaults
-in `mirror_pdfs.py`. **PBB (Petit Bao Bastille) is still missing** — find its
-manager channel ID and add it.
+Channel IDs for nine restaurants are already filled in as defaults
+in `mirror_pdfs.py`.
 
 ### Two things to know before switching it on
 
@@ -179,28 +178,4 @@ alert on missing PDFs partly covers the gap — say the word and I'll add a dail
 - **AI hooks stay commented out.** Both formatters keep their optional prose-only
   hooks (`summarize_general`, `filter_food_quality`), untouched and inactive.
 
-## What changed in your original files
 
-`extract_report.py`
-
-- Implemented `load_grid_from_sheets` (was `NotImplementedError`), including
-  right-padding rows — the API truncates trailing blanks, which would otherwise
-  turn empty cells into false "label introuvable" warnings.
-- Labels now map to **every** matching row, not just the first. `TOP 3` occupies
-  three rows in the sheet, so the original kept item 1 and silently dropped 2 and 3.
-- Added `date_iso` to `meta` to make the staleness guard possible.
-
-`overall_quality.py`, `food_quality.py` — unchanged apart from being imported as
-modules.
-
-## ⚠️ One bug in the source spreadsheet, not the code
-
-In Petit Bao EM's `Rapport Jour New` (25/08), the **`CA HT ON SITE` daily TOTAL
-reads `718,18 €`** — but MIDI (`987,82`) + SOIR (`2 426,95`) is `3 414,77 €`.
-`718,18 €` is exactly the `CA HT TAKE AWAY` total, so that TOTAL cell is
-pointing at the wrong column.
-
-`CA HT` and `COUVERTS` totals both check out, so this looks isolated to that one
-cell. The digest doesn't print the ON SITE total today, so nothing is wrong in
-Slack right now — but it's worth fixing before anyone builds on that cell, and
-worth checking whether the same formula was copied into the other 8 sheets.
