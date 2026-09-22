@@ -129,6 +129,64 @@ scheduler that can POST with headers (cron-job.org, Cloud Scheduler) can call
 `{"event_type":"run-digest"}`, and the same with
 `{"event_type":"run-cron-job","client_payload":{"mode":"collect"}}`.
 
+## Rehearsing against a test channel
+
+Both pipelines can be run for real without touching production: the digest
+takes `--to`, and the PDF mirror reads `REVIEWER_ID` from the environment.
+
+**Before the first rehearsal**, `/invite` the bot into the test channel — it is
+private, so the bot cannot post there otherwise:
+
+```
+/invite @YourBotName
+```
+
+### From GitHub (no local setup)
+
+Actions → **Daily digest** → Run workflow, then set:
+
+| Field | Value |
+|---|---|
+| dry run | **unticked** (you want a real message) |
+| date | the day you want, or blank for D-1 |
+| to | your test channel ID, e.g. `C0BSV1E70E6` |
+| no_archive | **ticked** (don't append rehearsal rows to real data) |
+
+Everything — both digests, the AI briefing, and any alert — lands in the test
+channel. Production variables are untouched, so a forgotten setting cannot
+leak into `#shortyshort`.
+
+For the PDF loop: Actions → **PDF review loop** → Run workflow → mode `collect`,
+dry run **ticked**. That prints which PDF it found in each of the nine manager
+channels without sending anything — the fastest way to prove the bot is in all
+nine. A channel the bot is missing from shows as `channel unreadable`.
+
+### From a terminal
+
+```powershell
+python -m pip install -r requirements.txt
+$env:SLACK_BOT_TOKEN   = "xoxb-..."
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
+$env:GOOGLE_SERVICE_ACCOUNT_JSON = Get-Content service-account.json -Raw
+python run_daily.py --to C0BSV1E70E6 --no-archive
+```
+
+Drop `--to` for a dry run that posts nowhere: `python run_daily.py --dry-run`.
+
+For the PDF mirror, point it at yourself instead of the reviewer so the
+mirrored PDFs arrive in your own DM:
+
+```powershell
+$env:REVIEWER_ID = "U09DX08QCV9"   # your own Slack user ID
+python mirror_pdfs.py collect --dry-run   # list what it would send
+python mirror_pdfs.py collect             # actually send them to your DM
+python mirror_pdfs.py route --dry-run     # after replying in the thread
+```
+
+`route` is safe to rehearse: it only forwards replies written by whoever
+`REVIEWER_ID` names, and each forwarded reply is claimed with a ✅ reaction so
+it cannot be sent twice.
+
 ## Operating it
 
 **Add or pause a restaurant** — edit the Control Panel sheet. Set `Include` to

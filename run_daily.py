@@ -49,6 +49,11 @@ ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION") or OPS_DESTINATION
 REPORT_OFFSET_DAYS = int(os.environ.get("REPORT_OFFSET_DAYS", "1"))
 
 
+class _SkipArchive(Exception):
+    """Control flow for --no-archive, so the skip reuses the same guarded block
+    that protects the digest from an archive failure."""
+
+
 def today_paris() -> dt.date:
     return dt.datetime.now(PARIS).date()
 
@@ -159,7 +164,23 @@ def main() -> int:
     ap.add_argument("--force", action="store_true",
                     help="Post even if today's digest is already in Slack.")
     ap.add_argument("--only", help="Restrict to one restaurant code, e.g. PB.")
+    ap.add_argument("--to", metavar="CHANNEL",
+                    help="Send everything (both digests and any alert) to this "
+                         "channel or user ID instead of the real destinations. "
+                         "For rehearsing against a test channel without "
+                         "touching the production variables.")
+    ap.add_argument("--no-archive", action="store_true",
+                    help="Skip the Archive tab. Use with --to so a rehearsal "
+                         "does not append test rows to real data.")
     args = ap.parse_args()
+
+    # One override for all three, so a test run cannot leak into a real channel
+    # by way of an alert.
+    ops_dest = args.to or OPS_DESTINATION
+    food_dest = args.to or FOOD_DESTINATION
+    alert_dest = args.to or ALERT_DESTINATION
+    if args.to:
+        print(f"Redirecting all output to {args.to}")
 
     target_date = (dt.date.fromisoformat(args.date) if args.date else target_paris())
 
@@ -170,8 +191,8 @@ def main() -> int:
     # Keyed by name, not by destination: pointing both at the same channel
     # while testing would otherwise collapse the two into one and silently
     # drop the ops digest.
-    plan = [("ops", OPS_DESTINATION, ops_header(target_date)),
-            ("food", FOOD_DESTINATION, food_header(target_date))]
+    plan = [("ops", ops_dest, ops_header(target_date)),
+            ("food", food_dest, food_header(target_date))]
     if not args.dry_run and not args.force:
         plan = [p for p in plan if not post_digest.already_posted(p[1], p[2])]
         if not plan:
@@ -207,7 +228,7 @@ def main() -> int:
                "Relancer avec *force* et la date voulue pour rattraper.")
         print(msg)
         if not args.dry_run:
-            post_digest.post(ALERT_DESTINATION, msg)
+            post_digest.post(alert_dest, msg)
         return 0
 
     ops_text, food_text = build_digests(results, target_date)
@@ -233,6 +254,8 @@ def main() -> int:
     archived = 0
     archive_error = None
     try:
+        if args.no_archive:
+            raise _SkipArchive()
         rows = [archive.row(loc, data) for loc, data, status in results if status == "ok"]
         if args.dry_run:
             print(f"\n(dry run) would archive {len(rows)} row(s) "
@@ -245,20 +268,22 @@ def main() -> int:
                 tab=config.archive_tab(settings),
             )
             print(f"Archived {archived} row(s).")
+    except _SkipArchive:
+        print("Archive skipped (--no-archive).")
     except Exception as e:
         archive_error = f"{type(e).__name__}: {e}"
         print(f"Archive failed: {archive_error}", file=sys.stderr)
 
     if summary_problem and not args.dry_run:
         post_digest.post(
-            ALERT_DESTINATION,
+            alert_dest,
             "🧠 *Digest posté sans le résumé IA* — les chiffres et les blocs "
             f"par restaurant sont intacts.\nRaison : {summary_problem}",
         )
 
     if archive_error and not args.dry_run:
         post_digest.post(
-            ALERT_DESTINATION,
+            alert_dest,
             "🗄️ *Digest posté, mais l'archivage a échoué* — les chiffres du jour "
             "ne sont pas dans l'onglet Archive. Relancer avec *force* pour "
             f"rattraper.\n```{archive_error}```",
@@ -267,7 +292,7 @@ def main() -> int:
     warnings = collect_warnings(results)
     if warnings and not args.dry_run:
         post_digest.post(
-            ALERT_DESTINATION,
+            alert_dest,
             "🔧 *Digest posté, mais des libellés sont introuvables* — une ligne a "
             "probablement été renommée ou déplacée :\n"
             + "\n".join(f"• {w}" for w in warnings),

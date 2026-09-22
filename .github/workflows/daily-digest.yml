@@ -26,6 +26,14 @@ on:
         description: "Post even if today's digest is already in Slack"
         type: boolean
         default: false
+      to:
+        description: "Send everything to this channel ID instead (rehearsal)"
+        type: string
+        default: ""
+      no_archive:
+        description: "Skip the Archive tab (use with the channel override)"
+        type: boolean
+        default: false
 
 concurrency:
   # Several triggers can overlap; never let two runs post twice.
@@ -66,4 +74,6 @@ jobs:
           python run_daily.py \
             ${{ inputs.dry_run && '--dry-run' || '' }} \
             ${{ inputs.force && '--force' || '' }} \
+            ${{ inputs.no_archive && '--no-archive' || '' }} \
+            ${{ inputs.to && format('--to {0}', inputs.to) || '' }} \
             ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
