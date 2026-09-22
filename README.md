@@ -76,6 +76,12 @@ Settings → Secrets and variables → Actions.
 | `SLACK_BOT_TOKEN` | `xoxb-…` |
 | `ANTHROPIC_API_KEY` | optional — the AI briefing is skipped without it |
 
+If that key was created at the **organisation** level rather than inside a
+workspace, the API rejects it with `anthropic-workspace-id`. Either add a
+repository *variable* `ANTHROPIC_WORKSPACE_ID` (Console → Settings →
+Workspaces → the `wrkspc_…` in the URL), or create a new key from inside a
+workspace and skip the variable.
+
 **Variables**
 
 | Name | Value |

@@ -25,6 +25,11 @@ import re
 
 MODEL = os.environ.get("AI_SUMMARY_MODEL", "claude-opus-5")
 
+# An API key created at the organisation level is not tied to a workspace, and
+# the API then refuses the request unless it is told which workspace to bill.
+# Set this (it is an ID, not a secret) or use a workspace-scoped key instead.
+WORKSPACE_ID = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+
 SYSTEM = """Tu es l'analyste ops de Bao Family, un groupe de restaurants à Paris.
 Tu écris le briefing de 6h du matin pour l'équipe ops, en français.
 
@@ -180,6 +185,24 @@ def build_prompt(payload) -> str:
 # The call
 # ---------------------------------------------------------------------------
 
+def _explain(e) -> str:
+    """Error text plus, where we recognise it, the fix — the alert lands in
+    Slack at 6am and should not need a developer to decode it."""
+    msg = f"{type(e).__name__}: {e}"
+    hints = {
+        "anthropic-workspace-id": (
+            "la clé API n'est pas rattachée à un workspace — définir la "
+            "variable ANTHROPIC_WORKSPACE_ID, ou créer une clé dans un "
+            "workspace"),
+        "credit balance": "le solde de crédits Anthropic est épuisé",
+        "authentication_error": "la clé API est invalide ou révoquée",
+        "rate_limit": "limite de débit atteinte, le prochain run réessaiera",
+    }
+    for needle, hint in hints.items():
+        if needle in msg:
+            return f"{hint} ({type(e).__name__})"
+    return msg
+
 def summarize(results, target_date):
     """Return (summary_text, problem). Exactly one of the two is None.
 
@@ -201,7 +224,10 @@ def summarize(results, target_date):
         return None, "le paquet anthropic n'est pas installé"
 
     try:
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(
+            default_headers={"anthropic-workspace-id": WORKSPACE_ID}
+            if WORKSPACE_ID else None,
+        )
         response = client.messages.create(
             model=MODEL,
             max_tokens=16000,
@@ -211,7 +237,7 @@ def summarize(results, target_date):
             messages=[{"role": "user", "content": build_prompt(payload)}],
         )
     except Exception as e:                     # never let the digest fail for this
-        return None, f"{type(e).__name__}: {e}"
+        return None, _explain(e)
 
     if response.stop_reason == "refusal":
         return None, "la génération a été refusée par le modèle"

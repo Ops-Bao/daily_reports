@@ -57,6 +57,8 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           # Optional: without it the digest posts with no AI briefing.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Only needed when the key is org-level rather than workspace-scoped.
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
           OPS_DESTINATION: ${{ vars.OPS_DESTINATION }}
           FOOD_DESTINATION: ${{ vars.FOOD_DESTINATION }}
           ALERT_DESTINATION: ${{ vars.ALERT_DESTINATION }}
