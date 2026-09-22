@@ -75,6 +75,12 @@ def fetch_location(service, loc, tab, target_date):
     # the single worst failure mode for a report people act on.
     if sheet_date != target_date.isoformat():
         shown = data["meta"].get("date") or "(vide)"
+        # Two very different situations wear the same mask. A date AFTER the
+        # target means the manager has already rolled the tab forward for
+        # today's service — i.e. we are running too late, and the figures we
+        # want have been overwritten. A date BEFORE it means nobody filled it.
+        if sheet_date and sheet_date > target_date.isoformat():
+            return data, f"future: la feuille indique déjà {shown}"
         return data, f"stale: la feuille indique {shown}"
 
     return data, "ok"
@@ -138,6 +144,14 @@ def collect_warnings(results) -> list:
 
 
 def main() -> int:
+    # Digests are full of emoji and French punctuation; a Windows console is
+    # cp1252 by default and raises on the first one. Harmless on the runner.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
                     help="Print both digests instead of posting to Slack.")
@@ -153,11 +167,14 @@ def main() -> int:
     # GitHub's scheduling delays); whichever arrives first posts, the rest see
     # the header already in Slack and stop. Checked before touching Sheets so a
     # duplicate run costs one API call.
-    todo = [(OPS_DESTINATION, ops_header(target_date)),
-            (FOOD_DESTINATION, food_header(target_date))]
+    # Keyed by name, not by destination: pointing both at the same channel
+    # while testing would otherwise collapse the two into one and silently
+    # drop the ops digest.
+    plan = [("ops", OPS_DESTINATION, ops_header(target_date)),
+            ("food", FOOD_DESTINATION, food_header(target_date))]
     if not args.dry_run and not args.force:
-        todo = [(d, h) for d, h in todo if not post_digest.already_posted(d, h)]
-        if not todo:
+        plan = [p for p in plan if not post_digest.already_posted(p[1], p[2])]
+        if not plan:
             print(f"Digest for {target_date} already posted; nothing to do.")
             return 0
 
@@ -178,6 +195,21 @@ def main() -> int:
         print(f"  {loc.code:5s} {status}")
         results.append((loc, data, status))
 
+    rolled = [loc.code for loc, _, s in results if s.startswith("future")]
+    if not any(s == "ok" for _, _, s in results) and rolled and not args.force:
+        # Every sheet already shows a later day: this run is too late, not a
+        # morning where nobody filled anything in. Posting would publish nine
+        # ⚠️ lines AND consume the header that stops duplicates, so the real
+        # digest could never go out afterwards. Say so instead.
+        msg = (f"⏰ *Digest non publié pour le {target_date:%d/%m/%Y}* — les "
+               f"feuilles affichent déjà un jour plus récent ({', '.join(rolled)}). "
+               "Le run est parti trop tard et les chiffres visés ont été écrasés.\n"
+               "Relancer avec *force* et la date voulue pour rattraper.")
+        print(msg)
+        if not args.dry_run:
+            post_digest.post(ALERT_DESTINATION, msg)
+        return 0
+
     ops_text, food_text = build_digests(results, target_date)
 
     # The briefing sits under the header, above the per-restaurant blocks, so
@@ -191,9 +223,9 @@ def main() -> int:
     elif summary_problem:
         print(f"AI briefing skipped: {summary_problem}")
 
-    texts = {OPS_DESTINATION: ops_text, FOOD_DESTINATION: food_text}
-    for dest, _ in todo:
-        post_digest.post(dest, texts[dest], dry_run=args.dry_run)
+    texts = {"ops": ops_text, "food": food_text}
+    for name, dest, _ in plan:
+        post_digest.post(dest, texts[name], dry_run=args.dry_run)
 
     # Archive after posting: the digest is the job people are waiting for, so a
     # broken archive must not stop it. It is idempotent on (date, code), so a
