@@ -1,15 +1,8 @@
 name: PDF review loop
 
 on:
-  schedule:
-    # Collect last night's PDFs and send them to the reviewer, just after the
-    # digest. Same DST trick as daily-digest: fire twice, let the job decide.
-    - cron: "10 5 * * *"
-    - cron: "10 6 * * *"
-    # Forward her comments back to the restaurants. Any schedule that is not
-    # one of the two collect crons above is treated as a route tick, so this
-    # line can be changed freely without touching the "Decide mode" step.
-    - cron: "*/5 7-11 * * *"
+  repository_dispatch:
+    types: [run-cron-job]
   workflow_dispatch:
     inputs:
       mode:
