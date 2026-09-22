@@ -246,6 +246,18 @@ def main():
     check("a derived total the model computed itself is caught",
           bool(AI.verify_numbers("Total groupe : 37 441,17 €.", allowed)), True)
 
+    # Narratives are full of non-figures the model may legitimately quote.
+    # Rejecting those made the guard fire on real briefings ("12h40", "13h45").
+    narrative = {"sites": [{"general": {"midi": "Rush de 12h40 a 13h45, "
+                                                "table 19 fermee, 250 couverts"}}]}
+    n_allowed = AI.allowed_numbers(narrative)
+    check("a time quoted from the narrative is accepted",
+          AI.verify_numbers("Rush entre 12h40 et 13h45.", n_allowed), [])
+    check("a count quoted from the narrative is accepted",
+          AI.verify_numbers("Environ 250 couverts.", n_allowed), [])
+    check("a number absent from the narrative is still caught",
+          AI.verify_numbers("Rush jusqu'a 14h55.", n_allowed), ["55"])
+
     print("\nAll checks passed.")
 
 

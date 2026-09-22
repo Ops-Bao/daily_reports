@@ -49,9 +49,8 @@ Format : 4 à 8 lignes maximum, en puces courtes.
 - Termine par les sites dont le rapport manque ou n'est pas à jour, s'il y en a.
 Pas de titre, pas de conclusion, pas de "n'hésitez pas"."""
 
-# Numbers this size are counts, dates or ordinals ("3 sites", "2 ruptures"),
-# not financial claims — requiring those to appear in the source data would
-# reject almost every correct summary.
+# Counts the model legitimately derives rather than copies: "3 sites",
+# "2 ruptures", "le 22". Anything larger has to be traceable to the input.
 SMALL_INT_MAX = 31
 
 _NUM_RE = re.compile(r"-?\d+(?:[    .,]\d+)*")
@@ -81,6 +80,16 @@ def _walk_numbers(node, out):
         return
     elif isinstance(node, (int, float)):
         out.add(round(float(node), 2))
+    elif isinstance(node, str):
+        # Narratives are full of numbers that are not figures — "12h40",
+        # "table 19", "2 tickets". Quoting one back is not an invention, so
+        # every number we sent counts, whatever field it arrived in. What the
+        # guard still catches is a number that appears nowhere in the input:
+        # a fabricated euro amount, or a total the model added up itself.
+        for tok in _NUM_RE.findall(node):
+            v = _norm_number(tok)
+            if v is not None:
+                out.add(v)
 
 
 def allowed_numbers(payload) -> set:
@@ -249,6 +258,9 @@ def summarize(results, target_date):
     bad = verify_numbers(text, allowed_numbers(payload))
     if bad:
         # Fail closed: a figure nobody can trace is worse than no summary.
+        # Print the draft to the job log (never to Slack) — without it you
+        # cannot tell a hallucination from a guard that is too strict.
+        print("--- résumé rejeté ---\n" + text + "\n---------------------")
         return None, ("chiffres non vérifiables dans le résumé : "
                       + ", ".join(bad[:5]))
 
