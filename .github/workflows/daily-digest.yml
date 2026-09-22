@@ -55,6 +55,8 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          # Optional: without it the digest posts with no AI briefing.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPS_DESTINATION: ${{ vars.OPS_DESTINATION }}
           FOOD_DESTINATION: ${{ vars.FOOD_DESTINATION }}
           ALERT_DESTINATION: ${{ vars.ALERT_DESTINATION }}

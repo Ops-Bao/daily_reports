@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# Read-only: nothing in this repo writes to a sheet, and the service account is
-# shared as Viewer anyway.
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+# Read/write: the restaurant sheets are only ever read, but the archive tab is
+# appended to, so the service account needs Editor on the archive spreadsheet.
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 CONTROL_PANEL_ID = os.environ.get(
     "CONTROL_PANEL_ID", "1-8ep5svVmINDD0pzp4BciRai0zYsnlSXiZCzeO0ZSwU"
@@ -30,6 +30,7 @@ CONTROL_PANEL_ID = os.environ.get(
 # Fallbacks used only if the Control Panel omits the setting.
 DEFAULTS = {
     "sheet tab name": "Rapport Jour New",
+    "archive tab name": "Archive",
 }
 
 
@@ -142,3 +143,23 @@ def load_config(service=None):
 
 def report_tab(settings) -> str:
     return settings.get("sheet tab name") or DEFAULTS["sheet tab name"]
+
+
+def archive_tab(settings) -> str:
+    return settings.get("archive tab name") or DEFAULTS["archive tab name"]
+
+
+def archive_spreadsheet_id(settings) -> str:
+    """Where the Archive tab lives. Defaults to the Control Panel itself.
+
+    Override with an "Archive sheet URL" row in the Control Panel settings, or
+    the ARCHIVE_SPREADSHEET_ID env var, if you would rather keep years of rows
+    out of the file ops people edit daily.
+    """
+    env = os.environ.get("ARCHIVE_SPREADSHEET_ID")
+    if env:
+        return env
+    for key in ("archive sheet url", "archive spreadsheet url", "archive url"):
+        if settings.get(key):
+            return extract_spreadsheet_id(settings[key]) or CONTROL_PANEL_ID
+    return CONTROL_PANEL_ID

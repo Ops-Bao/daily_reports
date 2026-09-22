@@ -10,10 +10,64 @@ import datetime as dt
 import extract_report as E
 import food_quality as F
 import overall_quality as O
+import ai_summary as AI
+import archive as A
 import post_digest as P
 import run_daily as R
 from config import Location
 from tests.test_fixture import GRID
+
+
+class FakeSheets:
+    """Just enough of the Sheets client to exercise archive.save() offline."""
+
+    def __init__(self, header, rows):
+        self.header, self.rows = list(header), [list(r) for r in rows]
+
+    # the client is service.spreadsheets().values().get(...).execute()
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self
+
+    def get(self, spreadsheetId=None, range=None, fields=None):
+        if range and range.endswith("!1:1"):
+            return _Exec({"values": [self.header]} if self.header else {})
+        # spreadsheets().get(...) — the tab always exists in these tests
+        return _Exec({"sheets": [{"properties": {"title": "Archive"}}]})
+
+    def batchGet(self, spreadsheetId=None, ranges=None):
+        out = []
+        for rng in ranges:
+            # "'Archive'!A2:A" -> "A"
+            col = "".join(c for c in rng.split("!")[1].split(":")[0] if c.isalpha())
+            idx = 0
+            for ch in col:
+                idx = idx * 26 + (ord(ch) - 64)
+            idx -= 1
+            out.append({"values": [[r[idx]] for r in self.rows if len(r) > idx]})
+        return _Exec({"valueRanges": out})
+
+    def update(self, spreadsheetId=None, range=None, valueInputOption=None, body=None):
+        self.header = list(body["values"][0])
+        return _Exec({})
+
+    def append(self, spreadsheetId=None, range=None, valueInputOption=None,
+               insertDataOption=None, body=None):
+        self.rows.extend(body["values"])
+        return _Exec({})
+
+    def batchUpdate(self, spreadsheetId=None, body=None):
+        return _Exec({})
+
+
+class _Exec:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def execute(self):
+        return self.payload
 
 
 def check(name, actual, expected):
@@ -119,6 +173,78 @@ def main():
     empty, _ = R.build_digests(
         [(Location("PB", "PETIT BAO EM", "x"), None, "error: x")], target)
     check("no crash on all-missing", "Aucun rapport disponible" in empty, True)
+
+    print("archive row")
+    loc = Location("PB", "PETIT BAO EM", "x")
+    r = A.row(loc, d)
+    check("every column has a value", sorted(r) == sorted(A.HEADERS), True)
+    check("code comes from the Control Panel", r["code"], "PB")
+    check("date is the ISO one", r["date"], "2026-08-25")
+    # The digests never show these; the archive existing is the whole point.
+    check("covers survive", r["couverts_on_site_soir"], 108)
+    check("ca_ttc survives", r["ca_ttc_total"], 4586.40)
+    check("week-to-date survives", r["ca_ht_wtd"], 8593.16)
+    check("ecart de caisse survives", r["ecart_de_caisse_midi"], 0.0)
+    check("narrative survives", r["general_midi"].startswith("Service à 2"), True)
+    check("missing value becomes blank, not None", r["walkouts_soir"], "")
+    check("numbers stay numbers for Sheets", isinstance(r["ca_ht_midi"], float), True)
+
+    print("archive writing")
+    fake = FakeSheets(header=[], rows=[])
+    n = A.save(fake, "SID", [r], tab="Archive")
+    check("first write creates the header", fake.header[:4],
+          ["date", "date_sheet", "code", "restaurant"])
+    check("one row appended", n, 1)
+    check("row is aligned to the header",
+          fake.rows[0][fake.header.index("couverts_on_site_soir")], 108)
+
+    # Re-running the morning must not double the day.
+    n2 = A.save(fake, "SID", [r], tab="Archive")
+    check("same day is not archived twice", n2, 0)
+    check("still one row", len(fake.rows), 1)
+
+    # Someone reorders the columns in the sheet; values must follow the sheet,
+    # not this file's order, or every cell shifts.
+    shuffled = FakeSheets(header=["code", "date"] + [h for h in A.HEADERS
+                                                     if h not in ("code", "date")],
+                          rows=[])
+    A.save(shuffled, "SID", [r], tab="Archive")
+    check("reordered header still lands correctly",
+          shuffled.rows[0][0:2], ["PB", "2026-08-25"])
+
+    # A column added to archive.py later must extend the header, not shift it.
+    trimmed = FakeSheets(header=A.HEADERS[:5], rows=[])
+    A.save(trimmed, "SID", [r], tab="Archive")
+    check("new columns are appended to the header", trimmed.header, A.HEADERS)
+
+    print("ai briefing guardrails")
+    payload = AI.build_payload(results, target)
+    check("only ok sites are summarised", [x["code"] for x in payload["sites"]], ["PB"])
+    check("failed sites are listed as missing",
+          sorted(x["code"] for x in payload["rapports_manquants"]), ["GB", "PBT"])
+    check("figures are passed already extracted",
+          payload["sites"][0]["ca_ht_total"], 4160.13)
+    check("empty narrative fields are dropped", "glitch" in payload["sites"][0], False)
+    check("real narrative survives", "general" in payload["sites"][0], True)
+
+    allowed = AI.allowed_numbers(payload)
+    # The model may quote what we gave it, in French formatting.
+    check("verbatim figure accepted",
+          AI.verify_numbers("CA HT de 4 160,13 € hier soir.", allowed), [])
+    check("rounded figure accepted",
+          AI.verify_numbers("CA HT d'environ 4 160 €.", allowed), [])
+    check("percentage accepted",
+          AI.verify_numbers("En hausse de 12,13% le soir.", allowed), [])
+    check("small counts accepted",
+          AI.verify_numbers("3 sites, 2 ruptures, rapport du 25/08.", allowed), [])
+    # And it may not invent one. This is the check that keeps the repo's
+    # "numbers never pass through an LLM" promise honest.
+    check("invented figure is caught",
+          AI.verify_numbers("CA HT de 9 999,99 € hier.", allowed), ["9 999,99"])
+    check("plausible-but-wrong figure is caught",
+          AI.verify_numbers("Le CA HT atteint 4 161,13 €.", allowed), ["4 161,13"])
+    check("a derived total the model computed itself is caught",
+          bool(AI.verify_numbers("Total groupe : 37 441,17 €.", allowed)), True)
 
     print("\nAll checks passed.")
 

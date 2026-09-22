@@ -3,9 +3,9 @@
 Two Slack digests every morning at 05:45 Paris, built from the 9 restaurant
 shift-report sheets. The digest covers **yesterday** (the last closed day).
 
-Nothing is stored: each sheet is read live, turned into a dict in memory,
-formatted, posted to Slack and discarded. The Slack messages are the only
-record.
+Every extracted field is appended to an **Archive** tab (one row per restaurant
+per day). The digests are deliberately lossy — about a dozen fields out of
+forty — so the archive, not Slack, is the record you analyse later.
 
 - **Ops digest** → `#shortyshort` (`C0A6VHL0CCF`)
 - **Food-quality digest** → DM to Jisoo (`U078L6FSV8T`)
@@ -43,8 +43,10 @@ so however many triggers fire, exactly one digest and one set of PDFs go out.
 
 ### 2. Share the sheets with it
 
-Share **the Control Panel and all 9 restaurant sheets** with that email as
-**Viewer**. This is the step that most often gets missed on one sheet — that
+Share the **9 restaurant sheets** with that email as **Viewer**, and the
+**Control Panel as Editor** — the Archive tab is written back to it. (If you
+point `Archive sheet URL` at a different spreadsheet, that one needs Editor and
+the Control Panel can stay Viewer.) This is the step that most often gets missed on one sheet — that
 location then shows up as `⚠️ … error` in the digest, which is the intended
 behaviour, not a crash.
 
@@ -72,6 +74,7 @@ Settings → Secrets and variables → Actions.
 |---|---|
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | the entire contents of the JSON key file |
 | `SLACK_BOT_TOKEN` | `xoxb-…` |
+| `ANTHROPIC_API_KEY` | optional — the AI briefing is skipped without it |
 
 **Variables**
 
@@ -124,6 +127,10 @@ scheduler that can POST with headers (cron-job.org, Cloud Scheduler) can call
 
 **Add or pause a restaurant** — edit the Control Panel sheet. Set `Include` to
 `FALSE` to pause one. No code change, no redeploy.
+
+**Move the archive elsewhere** — add an `Archive sheet URL` row to the Control
+Panel settings (or set `ARCHIVE_SPREADSHEET_ID`), and share that file as Editor.
+It defaults to a tab called `Archive` inside the Control Panel itself.
 
 **Change the tab name** — also the Control Panel. Tab names are discovered by
 content, so renaming a Control Panel tab won't break anything. (The Control
@@ -236,13 +243,55 @@ see that. A shared private channel would fix it. If you want to keep DMs, the
 alert on missing PDFs partly covers the gap — say the word and I'll add a daily
 "reviewed / not reviewed" tally into `#shortyshort` too.
 
+## The Archive tab
+
+Created on first run if missing. One row per restaurant per day, keyed on
+`(date, code)` — re-running a morning does not duplicate it, and a day that was
+missed is filled in by re-running with *force*.
+
+Columns are matched **by name**, never by position: reordering columns in the
+sheet, or adding a field to `archive.py` later, cannot shift existing values
+into the wrong column. A new field is appended to the header; old rows keep
+theirs.
+
+Numbers are written as numbers, so `SUM`/pivots work without cleaning. The
+`warnings` column records which labels drifted that day — without it you cannot
+tell, months later, whether a blank cell means "nothing happened" or "the row
+was renamed and we wrote N/A".
+
+If archiving fails the digest still posts, and a 🗄️ alert tells you to re-run
+with *force*.
+
+## The AI briefing
+
+The ops digest opens with a 4–8 line French briefing written by Claude
+(`claude-opus-5`) — the night's trend, and what needs a call today. Everything
+below it is the extractor's, unchanged.
+
+The repo's rule still holds: **numbers never pass through an LLM.** The model
+never sees a spreadsheet. It gets figures that were already extracted and
+parsed, and is told to quote them verbatim or describe things in words. Then
+`verify_numbers()` checks the output — every number in the briefing must be one
+we handed it (integers up to 31 are allowed, since "3 sites" and a date are not
+financial claims). A briefing containing an untraceable figure is **dropped, not
+posted**, and you get a 🧠 alert saying why.
+
+It degrades quietly in every other direction too: no `ANTHROPIC_API_KEY`, an API
+error, an empty response — the digest posts exactly as it did before, minus the
+briefing. Set `AI_SUMMARY_DISABLED=true` to turn it off, `AI_SUMMARY_MODEL` to
+change the model.
+
+Cost: nine restaurants is a few thousand input tokens, so roughly a cent a day.
+
 ## Design rules preserved from the original scripts
 
 - **Numbers never pass through an LLM.** Every figure is read verbatim from a
   labelled row and parsed by the French-number parser.
 - **Label-based, not row-index-based.** Inserting a row in one restaurant's
   sheet doesn't silently shift its values.
-- **AI hooks stay commented out.** Both formatters keep their optional prose-only
-  hooks (`summarize_general`, `filter_food_quality`), untouched and inactive.
+- **AI writes prose, never figures.** The briefing in `ai_summary.py` is the only
+  active LLM call, and its output is verified against the extracted numbers
+  before it is allowed into Slack. The two per-field hooks in the formatters
+  (`summarize_general`, `filter_food_quality`) remain commented out.
 
 

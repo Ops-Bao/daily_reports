@@ -2,10 +2,12 @@
 Orchestrator — the thing the scheduler actually runs.
 
 Flow: read the Control Panel → pull each included restaurant's report tab →
-extract deterministically → build the two digests → post them to Slack.
+extract deterministically → build the two digests → prepend an AI briefing to
+the ops one → post them to Slack → append every extracted field to the Archive
+tab.
 
-Nothing is persisted: the extracted data exists only in memory for this run and
-its sole output is the two Slack messages (plus alerts).
+The digests are lossy on purpose (a dozen fields out of forty); the archive is
+the complete record, and the only thing that survives the run.
 
 Guiding rule: one restaurant must never be able to take down the morning. A sheet
 that is unreachable, unfilled, or stale becomes a visible line inside the digest
@@ -21,6 +23,8 @@ import sys
 import traceback
 import zoneinfo
 
+import ai_summary
+import archive
 import config
 import extract_report
 import food_quality
@@ -176,9 +180,57 @@ def main() -> int:
 
     ops_text, food_text = build_digests(results, target_date)
 
+    # The briefing sits under the header, above the per-restaurant blocks, so
+    # the header stays the idempotency key and the figures below it are still
+    # the extractor's. If it cannot be produced the digest is unchanged.
+    summary, summary_problem = ai_summary.summarize(results, target_date)
+    if summary:
+        head, sep, rest = ops_text.partition(SEP)
+        ops_text = head + "\n\n" + summary + sep + rest
+        print("AI briefing added.")
+    elif summary_problem:
+        print(f"AI briefing skipped: {summary_problem}")
+
     texts = {OPS_DESTINATION: ops_text, FOOD_DESTINATION: food_text}
     for dest, _ in todo:
         post_digest.post(dest, texts[dest], dry_run=args.dry_run)
+
+    # Archive after posting: the digest is the job people are waiting for, so a
+    # broken archive must not stop it. It is idempotent on (date, code), so a
+    # re-run with --force fills in a day this step missed.
+    archived = 0
+    archive_error = None
+    try:
+        rows = [archive.row(loc, data) for loc, data, status in results if status == "ok"]
+        if args.dry_run:
+            print(f"\n(dry run) would archive {len(rows)} row(s) "
+                  f"with {len(archive.HEADERS)} columns")
+        else:
+            archived = archive.save(
+                service,
+                config.archive_spreadsheet_id(settings),
+                rows,
+                tab=config.archive_tab(settings),
+            )
+            print(f"Archived {archived} row(s).")
+    except Exception as e:
+        archive_error = f"{type(e).__name__}: {e}"
+        print(f"Archive failed: {archive_error}", file=sys.stderr)
+
+    if summary_problem and not args.dry_run:
+        post_digest.post(
+            ALERT_DESTINATION,
+            "🧠 *Digest posté sans le résumé IA* — les chiffres et les blocs "
+            f"par restaurant sont intacts.\nRaison : {summary_problem}",
+        )
+
+    if archive_error and not args.dry_run:
+        post_digest.post(
+            ALERT_DESTINATION,
+            "🗄️ *Digest posté, mais l'archivage a échoué* — les chiffres du jour "
+            "ne sont pas dans l'onglet Archive. Relancer avec *force* pour "
+            f"rattraper.\n```{archive_error}```",
+        )
 
     warnings = collect_warnings(results)
     if warnings and not args.dry_run:
