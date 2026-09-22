@@ -22,7 +22,6 @@ SCAN_FIELDS = [
     (("narrative", "glitch"), "GLITCH"),
     (("narrative", "foh"), "FOH"),
     (("narrative", "boh"), "BOH"),
-    (("narrative", "commentaires"), "COMMENTAIRES"),
     (("narrative", "general"), "GENERAL"),
 ]
 
