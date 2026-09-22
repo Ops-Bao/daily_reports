@@ -30,9 +30,10 @@ import extract_report
 import food_quality
 import overall_quality
 import post_digest
+import recap
 
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
-SEP = "\n\n———\n\n"
+SEP = post_digest.SECTION_SEP
 
 OPS_DESTINATION = os.environ.get("OPS_DESTINATION")   # #shortyshort
 FOOD_DESTINATION = os.environ.get("FOOD_DESTINATION")  # Jisoo (DM)
@@ -191,7 +192,8 @@ def main() -> int:
     # Keyed by name, not by destination: pointing both at the same channel
     # while testing would otherwise collapse the two into one and silently
     # drop the ops digest.
-    plan = [("ops", ops_dest, ops_header(target_date)),
+    plan = [("recap", ops_dest, recap.header(target_date)),
+            ("ops", ops_dest, ops_header(target_date)),
             ("food", food_dest, food_header(target_date))]
     if not args.dry_run and not args.force:
         plan = [p for p in plan if not post_digest.already_posted(p[1], p[2])]
@@ -233,18 +235,17 @@ def main() -> int:
 
     ops_text, food_text = build_digests(results, target_date)
 
-    # The briefing sits under the header, above the per-restaurant blocks, so
-    # the header stays the idempotency key and the figures below it are still
-    # the extractor's. If it cannot be produced the digest is unchanged.
-    summary, summary_problem = ai_summary.summarize(results, target_date)
-    if summary:
-        head, sep, rest = ops_text.partition(SEP)
-        ops_text = head + "\n\n" + summary + sep + rest
-        print("AI briefing added.")
+    # Numbers in the recap are computed here; the model only supplies the
+    # per-service prose. Without it the recap still goes out, showing the
+    # managers' own words instead.
+    prose, summary_problem = ai_summary.service_prose(results, target_date)
+    if prose:
+        print(f"AI prose for {len(prose)} service(s).")
     elif summary_problem:
-        print(f"AI briefing skipped: {summary_problem}")
+        print(f"AI prose skipped: {summary_problem}")
+    recap_text = recap.build(results, target_date, prose)
 
-    texts = {"ops": ops_text, "food": food_text}
+    texts = {"recap": recap_text, "ops": ops_text, "food": food_text}
     for name, dest, _ in plan:
         post_digest.post(dest, texts[name], dry_run=args.dry_run)
 
@@ -277,8 +278,9 @@ def main() -> int:
     if summary_problem and not args.dry_run:
         post_digest.post(
             alert_dest,
-            "🧠 *Digest posté sans le résumé IA* — les chiffres et les blocs "
-            f"par restaurant sont intacts.\nRaison : {summary_problem}",
+            "🧠 *Recap posté sans les résumés IA* — tous les chiffres sont "
+            "calculés et intacts ; les notes des managers remplacent la prose."
+            f"\nRaison : {summary_problem}",
         )
 
     if archive_error and not args.dry_run:

@@ -21,7 +21,11 @@ GRID = [
         "9 474,45 €", "8 663,40 €", "811,05 €", "9,36%"),
     row("CA HT", "1 246,00 €", "-23,64%", "2 914,13 €", "12,13%", "4 160,13 €",
         "8 593,16 €", "7 841,75 €", "751,41 €", "9,58%"),
-    row("CA HT ON SITE", "987,82 €", "-32,21%", "2 426,95 €", "3,34%", "718,18 €",
+    # TOTAL here is midi+soir. The sheet this was copied from had 718,18 € —
+    # the take-away total, duplicated into the on-site row. That is the exact
+    # defect the CA HT consistency check now catches, so the fixture carries
+    # the corrected value and a dedicated test corrupts it on purpose.
+    row("CA HT ON SITE", "987,82 €", "-32,21%", "2 426,95 €", "3,34%", "3 414,77 €",
         "7 286,84 €", "6 972,30 €", "314,55 €", "4,51%"),
     row("CA HT TAKE AWAY", "258,18 €", "47,92%", "460,00 €", "83,67%", "718,18 €",
         "1 211,95 €", "822,27 €", "389,68 €", "47,39%"),

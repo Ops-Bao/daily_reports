@@ -12,6 +12,7 @@ import food_quality as F
 import overall_quality as O
 import ai_summary as AI
 import archive as A
+import recap as RC
 import post_digest as P
 import run_daily as R
 from config import Location
@@ -135,6 +136,48 @@ def main():
     dd = E.extract(g)
     check("ambiguous prefix refuses to guess",
           any("introuvable: 'BESOIN'" in w for w in dd["_warnings"]), True)
+
+    print("split consistency")
+    # A TOTAL cell pointing at the wrong row is invisible in the digest and
+    # silently wrong in the recap, so it has to be caught at extraction.
+    g = [r[:] for r in GRID]
+    for r in g:
+        if r[2] == "CA HT ON SITE":
+            r[7] = "718,18 €"          # the take-away total, as found in the wild
+    dd = E.extract(g)
+    check("a total that does not match its parts is flagged",
+          any("Incohérence CA HT" in w for w in dd["_warnings"]), True)
+    check("a consistent sheet is not flagged",
+          any("Incohérence CA HT" in w for w in d["_warnings"]), False)
+
+    print("recap arithmetic")
+    # Two restaurants with figures chosen so every aggregate can be checked by
+    # hand — the live sheets only ever hold one day, so this is the only place
+    # the group maths is verifiable.
+    def fake(ca, on, ta, de, cov, wtd, wtdp):
+        return {"meta": {"restaurant": "X", "date": "01/01/2026"},
+                "finance": {"ca_ht": {"total": ca, "wtd": wtd, "wtd_prior": wtdp},
+                            "ca_ht_on_site": {"total": on},
+                            "ca_ht_take_away": {"total": ta},
+                            "ca_ht_delivery": {"total": de}},
+                "covers": {"on_site": {"total": cov}}}
+    oks = [(Location("A", "Aaa", "1"), fake(1000.0, 700.0, 200.0, 100.0, 50, 5000.0, 4000.0)),
+           (Location("B", "Bbb", "2"), fake(1000.0, 500.0, 300.0, 200.0, 50, 5000.0, 6000.0))]
+    t = RC.totals(oks)
+    check("group CA HT is the sum", t["ca_ht_total"], 2000.0)
+    check("ventilated total is the sum of the three channels", t["ventile"], 2000.0)
+    check("on-site share", round(t["on_site_pct"], 2), 60.0)
+    check("take-away share", round(t["take_away_pct"], 2), 25.0)
+    check("delivery share", round(t["delivery_pct"], 2), 15.0)
+    # 1200 € on-site over 100 covers, not 2000 € over 100.
+    check("average ticket uses on-site revenue only", t["tm_on_site"], 12.0)
+    check("week-to-date comparison", t["wtd_pct"], 0.0)
+
+    # A blank column must read N/A, never a confident zero.
+    blank = [(Location("A", "Aaa", "1"), fake(1000.0, None, None, None, None, None, None))]
+    tb = RC.totals(blank)
+    check("missing channels give no share", tb["on_site_pct"], None)
+    check("missing covers give no average ticket", tb["tm_on_site"], None)
 
     print("date targeting")
     # The 7am run must ask for yesterday: today's sheet is either not rolled

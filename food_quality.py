@@ -79,7 +79,7 @@ def _is_empty(val):
 
 
 def format_food_quality(data: dict, shift: str) -> str:
-    lines = [f"*Service: {shift.upper()}*"]
+    lines = [f"*{shift.upper()}*"]
     any_content = False
     for path, label in SCAN_FIELDS:
         val = _get(data, path, shift)
@@ -108,7 +108,8 @@ def format_food_quality(data: dict, shift: str) -> str:
 
 
 def build_food_report(data: dict) -> str:
-    header = f"🥢 *RAPPORT QUALITÉ FOOD — {data['meta']['restaurant']}* — {data['meta']['date']}"
+    header = (f"🥢 *RAPPORT QUALITÉ FOOD — {data['meta']['restaurant']}* — "
+              f"*{data['meta']['date']}*")
     return (header + "\n\n"
             + format_food_quality(data, "midi") + "\n\n"
             + format_food_quality(data, "soir"))

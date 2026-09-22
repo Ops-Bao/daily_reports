@@ -90,7 +90,7 @@ def format_service(data: dict, shift: str) -> str:
         recep_status = "N/A"
 
     lines = [
-        f"*Service: {shift.upper()}*",
+        f"*{shift.upper()}*",
         f"Responsable du site: {manager}",
         f"GENERAL: {general}",
         f"CA HT: {_eur(ca_ht)}",
@@ -108,7 +108,7 @@ def format_service(data: dict, shift: str) -> str:
 
 
 def build_message(data: dict) -> str:
-    header = f"🍜 *{data['meta']['restaurant']}* — {data['meta']['date']}"
+    header = f"🍜 *{data['meta']['restaurant']}* — *{data['meta']['date']}*"
     return (header + "\n\n"
             + format_service(data, "midi") + "\n\n"
             + format_service(data, "soir"))

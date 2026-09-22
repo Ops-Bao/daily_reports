@@ -287,6 +287,24 @@ def extract(grid: list) -> dict:
         },
         "_warnings": r._warnings,
     }
+
+    # CA HT must equal sur place + take away + livraison. When it does not, a
+    # TOTAL cell is stale or points at the wrong row — which is invisible in
+    # the digest (it only shows CA HT) but silently corrupts the recap's
+    # répartition. Found in the wild: two rows of one sheet sharing a total.
+    fin = data["finance"]
+    parts = [fin[k]["total"] for k in
+             ("ca_ht_on_site", "ca_ht_take_away", "ca_ht_delivery")]
+    whole = fin["ca_ht"]["total"]
+    # Only meaningful once the day is closed. Mid-service the TOTAL column is
+    # still 0 while the channel rows hold partial figures, which is normal and
+    # must not raise a warning.
+    if whole and all(p is not None for p in parts):
+        if abs(sum(parts) - whole) > 0.5:
+            data["_warnings"].append(
+                f"Incohérence CA HT: total {whole:.2f} ≠ sur place+TA+livraison "
+                f"{sum(parts):.2f} (une cellule TOTAL est fausse)")
+
     return data
 
 

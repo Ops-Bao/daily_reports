@@ -15,8 +15,13 @@ import slack_api
 # Slack's hard limit is 40000 chars; stay well under so we never test the edge.
 MAX_CHARS = 30000
 
+# The line between restaurants. Defined here because _split() uses it as the
+# safe place to cut a long digest, and the formatters use it as decoration —
+# if the two ever disagreed, a split would land mid-restaurant.
+SECTION_SEP = "\n────────────────────────────\n"
 
-def _split(text: str, sep: str = "\n\n———\n\n") -> list:
+
+def _split(text: str, sep: str = SECTION_SEP) -> list:
     """Split into Slack-sized chunks on section boundaries, never mid-sentence."""
     if len(text) <= MAX_CHARS:
         return [text]

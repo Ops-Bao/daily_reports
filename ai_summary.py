@@ -1,23 +1,24 @@
 """
-The one place an LLM touches the morning digest.
+The one place an LLM touches the morning output.
 
-It writes a short French briefing that goes at the top of the ops message: what
-happened last night across the nine restaurants, and what needs someone's
-attention today. Everything below it in the digest stays exactly as the
-extractor read it.
+It writes the one- or two-sentence description of how each service went, which
+sits under each MIDI / SOIR line in the recap. That is all it does.
 
-Why this does not break the "numbers never pass through an LLM" rule
---------------------------------------------------------------------
-The model never sees a spreadsheet and never computes anything. It receives
-figures that were already extracted and parsed, and is told to quote them
-verbatim or not at all. Then `verify_numbers()` checks the output: every number
-in the summary must be one we handed it (small integers are allowed, since
-"3 restaurants" and a date are not financial claims). A summary containing a
-figure we did not send is dropped, not posted — a wrong number in an ops
-briefing is worse than no briefing.
+Why it is scoped that narrowly
+------------------------------
+Every number in the recap — the group total, the on-site / take-away /
+delivery split, the percentages, the average ticket, the week comparison — is
+computed in `recap.py` from values the extractor read verbatim. A model
+producing those would be handing the ops team arithmetic nobody can check.
+So the model gets the manager's free text and returns prose.
 
-If anything fails — no API key, an API error, a hallucinated figure — the
-summary is skipped and the deterministic digest posts exactly as before.
+Even then the output is verified: `verify_numbers()` rejects any number that
+does not appear somewhere in what we sent. Times and counts quoted out of a
+manager's note are fine — they are copied, not invented — but a euro amount
+that appears nowhere in the input is not, and the whole batch is dropped.
+
+If anything fails — no API key, an API error, a hallucinated figure — the recap
+falls back to the managers' own words and still goes out.
 """
 
 import os
@@ -30,24 +31,27 @@ MODEL = os.environ.get("AI_SUMMARY_MODEL", "claude-opus-5")
 # Set this (it is an ID, not a secret) or use a workspace-scoped key instead.
 WORKSPACE_ID = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
 
-SYSTEM = """Tu es l'analyste ops de Bao Family, un groupe de restaurants à Paris.
-Tu écris le briefing de 6h du matin pour l'équipe ops, en français.
+SYSTEM = """Tu rédiges le récapitulatif quotidien de Bao Family, un groupe de
+restaurants à Paris, à partir des notes écrites par les managers.
+
+Pour CHAQUE service qu'on te donne, écris UNE à DEUX phrases en français qui
+résument comment le service s'est passé : l'affluence et son rythme, ce qui a
+bien marché, et tout incident ou point d'attention. Style factuel et
+opérationnel, comme un chef de service qui débriefe — pas de superlatifs, pas
+de conclusion, pas de recommandation.
 
 Règles absolues :
-- N'INVENTE AUCUN CHIFFRE. Tu ne peux citer que les chiffres fournis, copiés
-  exactement tels quels (même format, sans arrondir, sans recalculer).
-- Ne calcule rien : pas de totaux, pas de moyennes, pas d'écarts que tu
-  devrais déduire toi-même.
-- Si tu n'es pas sûr, décris la situation en mots plutôt qu'en chiffres.
-- Ton opérationnel, direct, sans flatterie ni conclusion creuse.
+- N'INVENTE AUCUN CHIFFRE. Tu peux reprendre un horaire ou un nombre déjà
+  présent dans la note du manager ("rush à 12h30", "table de 11"), mais tu ne
+  calcules rien et tu n'ajoutes aucun montant.
+- Ne parle pas du chiffre d'affaires ni des pourcentages : ils sont affichés
+  au-dessus de ta phrase, les répéter est inutile.
+- Si la note du manager est vide ou dit seulement RAS, écris exactement :
+  Service sans particularité.
 
-Format : 4 à 8 lignes maximum, en puces courtes.
-- Une première ligne sur la tendance générale de la nuit.
-- Puis uniquement ce qui mérite une action ou un coup de fil aujourd'hui :
-  ruptures, incidents, qualité produit, réceptions marchandises, écarts.
-- Si un site n'a rien de notable, ne le mentionne pas.
-- Termine par les sites dont le rapport manque ou n'est pas à jour, s'il y en a.
-Pas de titre, pas de conclusion, pas de "n'hésitez pas"."""
+Réponds UNIQUEMENT avec un objet JSON, sans texte autour, de la forme :
+{"CODE|midi": "…", "CODE|soir": "…"}
+en utilisant exactement les clés fournies dans la demande."""
 
 # Counts the model legitimately derives rather than copies: "3 sites",
 # "2 ruptures", "le 22". Anything larger has to be traceable to the input.
@@ -177,17 +181,9 @@ def build_payload(results, target_date) -> dict:
             "sites": sites, "rapports_manquants": missing}
 
 
-def build_prompt(payload) -> str:
+def _json_dump(payload) -> str:
     import json
-    return (
-        f"Rapports de la journée du {payload['date']} "
-        f"({len(payload['sites'])} site(s) avec rapport, "
-        f"{len(payload['rapports_manquants'])} manquant(s)).\n\n"
-        "Les chiffres ci-dessous sont déjà extraits et vérifiés : tu peux les "
-        "citer tels quels, tu ne dois rien recalculer.\n\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
-        "Rédige le briefing ops selon tes règles."
-    )
+    return json.dumps(payload, ensure_ascii=False, indent=1)
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +208,27 @@ def _explain(e) -> str:
             return f"{hint} ({type(e).__name__})"
     return msg
 
-def summarize(results, target_date):
-    """Return (summary_text, problem). Exactly one of the two is None.
+def _parse_json_object(text: str):
+    """Pull the JSON object out of the reply, tolerating stray prose around it."""
+    import json
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        return json.loads(text[start:end + 1])
+    except ValueError:
+        return None
 
-    `problem` is a short operator-facing string when the summary was skipped, so
-    the caller can say why in the alert channel instead of silently dropping it.
+
+def service_prose(results, target_date):
+    """Return (prose, problem) where prose is {"CODE|midi": "…"} or None.
+
+    Exactly one of the two is None. `problem` is a short operator-facing string
+    so the alert says what to do rather than dumping a stack trace at 6am.
     """
     if os.environ.get("AI_SUMMARY_DISABLED", "").lower() in {"1", "true", "yes"}:
         return None, None
@@ -225,12 +237,23 @@ def summarize(results, target_date):
 
     payload = build_payload(results, target_date)
     if not payload["sites"]:
-        return None, None          # nothing to summarise
+        return None, None
+
+    keys = [f"{s['code']}|{shift}" for s in payload["sites"]
+            for shift in ("midi", "soir")]
 
     try:
         import anthropic
     except ImportError:
         return None, "le paquet anthropic n'est pas installé"
+
+    prompt = (
+        f"Services du {payload['date']}. Rédige une entrée pour chacune de ces "
+        f"{len(keys)} clés :\n{', '.join(keys)}\n\n"
+        "Notes des managers et contexte :\n"
+        f"{_json_dump(payload)}\n\n"
+        "Réponds avec le seul objet JSON."
+    )
 
     try:
         client = anthropic.Anthropic(
@@ -243,25 +266,35 @@ def summarize(results, target_date):
             system=SYSTEM,
             thinking={"type": "adaptive"},
             output_config={"effort": "medium"},
-            messages=[{"role": "user", "content": build_prompt(payload)}],
+            messages=[{"role": "user", "content": prompt}],
         )
-    except Exception as e:                     # never let the digest fail for this
+    except Exception as e:                     # never let the recap fail for this
         return None, _explain(e)
 
     if response.stop_reason == "refusal":
         return None, "la génération a été refusée par le modèle"
 
     text = "".join(b.text for b in response.content if b.type == "text").strip()
-    if not text:
-        return None, "réponse vide"
+    prose = _parse_json_object(text)
+    if not isinstance(prose, dict) or not prose:
+        return None, "réponse illisible (JSON attendu)"
 
-    bad = verify_numbers(text, allowed_numbers(payload))
+    prose = {k: " ".join(str(v).split()) for k, v in prose.items()
+             if isinstance(v, str) and v.strip()}
+
+    bad = verify_numbers(" ".join(prose.values()), allowed_numbers(payload))
     if bad:
-        # Fail closed: a figure nobody can trace is worse than no summary.
+        # Fail closed: a figure nobody can trace is worse than no prose.
         # Print the draft to the job log (never to Slack) — without it you
         # cannot tell a hallucination from a guard that is too strict.
-        print("--- résumé rejeté ---\n" + text + "\n---------------------")
+        print("--- prose rejetée ---\n" + text + "\n---------------------")
         return None, ("chiffres non vérifiables dans le résumé : "
                       + ", ".join(bad[:5]))
 
-    return text, None
+    missing = [k for k in keys if k not in prose]
+    if missing:
+        # Not fatal: recap.py falls back to the manager's own words per service.
+        print(f"prose manquante pour {len(missing)} service(s): "
+              f"{', '.join(missing[:6])}")
+
+    return prose, None
