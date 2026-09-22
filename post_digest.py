@@ -15,10 +15,12 @@ import slack_api
 # Slack's hard limit is 40000 chars; stay well under so we never test the edge.
 MAX_CHARS = 30000
 
-# The line between restaurants. Defined here because _split() uses it as the
-# safe place to cut a long digest, and the formatters use it as decoration —
-# if the two ever disagreed, a split would land mid-restaurant.
-SECTION_SEP = "\n────────────────────────────\n"
+# The line between restaurants, defined once and imported by everything
+# that draws or splits on it. _split() uses it as the safe place to cut a
+# long digest and the formatters use it as decoration; if the two ever
+# disagreed, a split would land in the middle of a restaurant.
+SECTION_RULE = "\u2500" * 44
+SECTION_SEP = f"\n{SECTION_RULE}\n"
 
 
 def _split(text: str, sep: str = SECTION_SEP) -> list:

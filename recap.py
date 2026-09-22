@@ -20,7 +20,10 @@ prose, and prose is what it is good at.
 the manager's raw narrative instead, so the recap still works with no API key.
 """
 
-SEP_LINE = "────────────────────────────"
+import post_digest
+
+# Same rule as the digests, so the two messages line up in the channel.
+SEP_LINE = post_digest.SECTION_RULE
 
 
 def _eur(v):

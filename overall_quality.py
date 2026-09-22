@@ -91,18 +91,18 @@ def format_service(data: dict, shift: str) -> str:
 
     lines = [
         f"*{shift.upper()}*",
-        f"Responsable du site: {manager}",
-        f"GENERAL: {general}",
-        f"CA HT: {_eur(ca_ht)}",
-        f"CA HT W-1: {_pct(ca_ht_pct)}",
-        f"TM ON SITE: {tm_on_site}",
-        f"PANIER OUTSIDE: {_eur(panier)}",
-        f"TOP 3: {top3}",
-        f"MERCHANDISE RECEPTION STATUS: {recep_status}",
-        f"MERCH RECEPTION COMMENTS: {recep_comments}",
-        f"BESOINS: {besoin}",
-        f"RUPTURES: {ruptures}",
-        f"GLITCH: {glitch}",
+        f"*Responsable du site:* {manager}",
+        f"*GENERAL:* {general}",
+        f"*CA HT:* {_eur(ca_ht)}",
+        f"*CA HT W-1:* {_pct(ca_ht_pct)}",
+        f"*TM ON SITE:* {tm_on_site}",
+        f"*PANIER OUTSIDE:* {_eur(panier)}",
+        f"*TOP 3:* {top3}",
+        f"*MERCHANDISE RECEPTION STATUS:* {recep_status}",
+        f"*MERCH RECEPTION COMMENTS:* {recep_comments}",
+        f"*BESOINS:* {besoin}",
+        f"*RUPTURES:* {ruptures}",
+        f"*GLITCH:* {glitch}",
     ]
     return "\n".join(lines)
 

@@ -96,10 +96,10 @@ def format_food_quality(data: dict, shift: str) -> str:
         # other fields only when non-empty (so the food person isn't
         # wading through "//" and "RAS").
         if label == "QUALITE FOOD":
-            lines.append(f"{label}: {val if not _is_empty(val) else 'RAS'}")
+            lines.append(f"*{label}:* {val if not _is_empty(val) else 'RAS'}")
             any_content = True
         elif not _is_empty(val):
-            lines.append(f"{label}: {val}")
+            lines.append(f"*{label}:* {val}")
             any_content = True
 
     if not any_content:
