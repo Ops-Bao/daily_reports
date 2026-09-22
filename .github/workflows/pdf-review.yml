@@ -55,20 +55,7 @@ jobs:
             echo "dry=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Is this the right hour?
-        id: hour
-        run: |
-          # Check Paris hour when mode is 'collect'
-          if [ "${{ steps.m.outputs.mode }}" = "collect" ] && \
-             [ "$(TZ=Europe/Paris date +%H)" != "07" ]; then
-            echo "Paris hour $(TZ=Europe/Paris date +%H) — skipping collection."
-            echo "go=no" >> "$GITHUB_OUTPUT"
-          else
-            echo "go=yes" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run
-        if: steps.hour.outputs.go == 'yes'
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           REVIEWER_ID: ${{ vars.REVIEWER_ID }}
