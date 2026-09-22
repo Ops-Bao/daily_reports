@@ -14,7 +14,7 @@ compatibility_date = "2026-01-01"
 [vars]
 REPO = "Ops-Bao/daily_reports"
 DIGEST_HOUR_PARIS = "5"          # the morning dispatch fires at :45 of this Paris hour
-REVIEWER_ID = "U_CHANGE_ME"      # must match the REVIEWER_ID repo variable
+REVIEWER_ID = "U043V696AAE"      # must match the REVIEWER_ID repo variable
 ROUTE_CRON = "*/30 5-11 * * *"   # must match the route cron in [triggers] below
 
 [triggers]
