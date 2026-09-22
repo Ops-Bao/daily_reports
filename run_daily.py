@@ -32,7 +32,9 @@ SEP = "\n\n———\n\n"
 
 OPS_DESTINATION = os.environ.get("OPS_DESTINATION")   # #shortyshort
 FOOD_DESTINATION = os.environ.get("FOOD_DESTINATION")  # Jisoo (DM)
-ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION") # me
+# Alerts fall back to the ops channel: an alert that goes nowhere is how three
+# weeks of failed runs went unnoticed.
+ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION") or OPS_DESTINATION
 
 
 # At 7am the completed report is YESTERDAY's — the evening service has to close
@@ -74,11 +76,22 @@ def fetch_location(service, loc, tab, target_date):
     return data, "ok"
 
 
+def ops_header(target_date) -> str:
+    return f"📊 *DAILY OPS CHECK-IN* — {target_date:%d/%m/%Y}"
+
+
+def food_header(target_date) -> str:
+    return f"🥢 *RAPPORT QUALITÉ FOOD* — {target_date:%d/%m/%Y}"
+
+
 def build_digests(results, target_date):
-    """Return (ops_text, food_text) covering every location in one message each."""
-    header_date = target_date.strftime("%d/%m/%Y")
-    ops_blocks = [f"📊 *DAILY OPS CHECK-IN* — {header_date}"]
-    food_blocks = [f"🥢 *RAPPORT QUALITÉ FOOD* — {header_date}"]
+    """Return (ops_text, food_text) covering every location in one message each.
+
+    The header line doubles as the idempotency key: `already_posted` looks for
+    it in the destination before posting, so build it here and nowhere else.
+    """
+    ops_blocks = [ops_header(target_date)]
+    food_blocks = [food_header(target_date)]
 
     missing = []
     posted = 0
@@ -125,22 +138,26 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="Print both digests instead of posting to Slack.")
     ap.add_argument("--date", help="Override the target date (YYYY-MM-DD).")
-    ap.add_argument("--check-hour", action="store_true",
-                    help="Exit quietly unless the Paris hour matches Run Hour. "
-                         "Lets one UTC cron pair cover both DST offsets.")
+    ap.add_argument("--force", action="store_true",
+                    help="Post even if today's digest is already in Slack.")
     ap.add_argument("--only", help="Restrict to one restaurant code, e.g. PB.")
     args = ap.parse_args()
 
     target_date = (dt.date.fromisoformat(args.date) if args.date else target_paris())
 
-    locations, settings, service = config.load_config()
-
-    if args.check_hour:
-        now_hour = dt.datetime.now(PARIS).hour
-        want = config.run_hour(settings)
-        if now_hour != want:
-            print(f"Paris hour {now_hour} != Run Hour {want}; skipping.")
+    # Idempotency, not clock-gating. Several crons fire (DST pair + spares for
+    # GitHub's scheduling delays); whichever arrives first posts, the rest see
+    # the header already in Slack and stop. Checked before touching Sheets so a
+    # duplicate run costs one API call.
+    todo = [(OPS_DESTINATION, ops_header(target_date)),
+            (FOOD_DESTINATION, food_header(target_date))]
+    if not args.dry_run and not args.force:
+        todo = [(d, h) for d, h in todo if not post_digest.already_posted(d, h)]
+        if not todo:
+            print(f"Digest for {target_date} already posted; nothing to do.")
             return 0
+
+    locations, settings, service = config.load_config()
 
     if args.only:
         locations = [l for l in locations if l.code.upper() == args.only.upper()]
@@ -159,8 +176,9 @@ def main() -> int:
 
     ops_text, food_text = build_digests(results, target_date)
 
-    post_digest.post(OPS_DESTINATION, ops_text, dry_run=args.dry_run)
-    post_digest.post(FOOD_DESTINATION, food_text, dry_run=args.dry_run)
+    texts = {OPS_DESTINATION: ops_text, FOOD_DESTINATION: food_text}
+    for dest, _ in todo:
+        post_digest.post(dest, texts[dest], dry_run=args.dry_run)
 
     warnings = collect_warnings(results)
     if warnings and not args.dry_run:

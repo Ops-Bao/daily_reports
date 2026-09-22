@@ -1,6 +1,6 @@
 # Daily digest pipeline
 
-Two Slack digests every morning at 7:00 Paris, built from the 9 restaurant
+Two Slack digests every morning at 05:45 Paris, built from the 9 restaurant
 shift-report sheets. The digest covers **yesterday** (the last closed day).
 
 Nothing is stored: each sheet is read live, turned into a dict in memory,
@@ -17,17 +17,21 @@ Control Panel sheet ──► config.py ──┐
                                           └─► food_quality.py
 ```
 
-## Why GitHub Actions
+## Why GitHub Actions, and why not its cron
 
 The code already lives in GitHub, the job is a once-a-day batch that runs for
-seconds, and Actions gives you cron, encrypted secrets, run logs, and a
-"re-run" button with no infrastructure to own. Cloud Functions would add a
-deploy step and a Cloud Scheduler job to buy nothing this pipeline needs.
+seconds, and Actions gives you encrypted secrets, run logs, and a "re-run"
+button with no infrastructure to own.
 
-Keep Cloud Functions in mind for **Pipeline 2** (the PDF mirroring with reply
-routing) — that one is event-driven and genuinely wants an HTTP endpoint.
+What Actions does **not** give you is a punctual clock. `schedule` runs are
+low priority: in September 2026 the 05:00 UTC cron was observed starting at
+11:30–13:20 Paris for days in a row. So the real trigger is a 10-line
+Cloudflare Worker (`worker/`) that starts both workflows through the API at
+05:45 Paris — API-started runs begin within seconds. GitHub's own crons stay
+as a fallback. Both jobs are **idempotent** (they look in Slack before posting),
+so however many triggers fire, exactly one digest and one set of PDFs go out.
 
-## Setup — five steps
+## Setup — six steps
 
 ### 1. Google service account
 
@@ -83,13 +87,51 @@ Actions → **Daily digest** → Run workflow → leave *dry run* checked. The d
 print to the job log without posting. Read them, then re-run with dry run
 unchecked to post for real.
 
+### 6. The Cloudflare Worker — the clock and the doorbell
+
+One Worker does two jobs: starts both pipelines at 05:45 Paris, and starts
+`route` the instant the reviewer posts a comment.
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens → new token,
+   repository access: this repo only, permission **Contents: Read and write**
+   (that is what `repository_dispatch` checks — not the "Actions" permission).
+2. Edit `worker/wrangler.toml`: set `REVIEWER_ID` to the same `U…` you put in
+   the repo variables.
+3. `npx` needs Node.js — install it first (`winget install OpenJS.NodeJS.LTS`),
+   or skip wrangler entirely and paste `worker/src/index.js` into the
+   Cloudflare dashboard (Workers → Create → Edit code), setting the vars,
+   secrets and the three cron triggers in the UI.
+   In `worker/`: `npx wrangler login`, `npx wrangler deploy`, then
+   `npx wrangler secret put GITHUB_TOKEN` and
+   `npx wrangler secret put SLACK_SIGNING_SECRET` (Slack app → Basic
+   Information → Signing Secret).
+4. Deploying prints the Worker URL (the dashboard shows it too). In the Slack app → **Event
+   Subscriptions** → on, paste that URL as the Request URL (Slack verifies it
+   immediately — the Worker answers the challenge), then under *Subscribe to
+   bot events* add **`message.im`** and reinstall the app when prompted.
+
+Test it: post a threaded reply in the reviewer's DM. A "PDF review loop" run
+should appear in the Actions tab within a few seconds. `npx wrangler tail`
+shows the Worker's own log if it does not.
+
+No-code alternative for the 05:45 part only (you lose instant routing): any
+scheduler that can POST with headers (cron-job.org, Cloud Scheduler) can call
+`POST https://api.github.com/repos/Ops-Bao/daily_reports/dispatches` with
+`{"event_type":"run-digest"}`, and the same with
+`{"event_type":"run-cron-job","client_payload":{"mode":"collect"}}`.
+
 ## Operating it
 
 **Add or pause a restaurant** — edit the Control Panel sheet. Set `Include` to
 `FALSE` to pause one. No code change, no redeploy.
 
-**Change the tab name or run hour** — also the Control Panel. Tab names are
-discovered by content, so renaming a Control Panel tab won't break anything.
+**Change the tab name** — also the Control Panel. Tab names are discovered by
+content, so renaming a Control Panel tab won't break anything. (The Control
+Panel's *Run hour* row is no longer read — the time is set by the Worker's
+`DIGEST_HOUR_PARIS` and the workflow crons.)
+
+**Re-post a day on purpose** — Run workflow → tick *force*. Without it a second
+run for the same day exits with "already posted".
 
 **Backfill a specific day** — Run workflow → set date to `2026-08-24`.
 
@@ -98,22 +140,28 @@ discovered by content, so renaming a Control Panel tab won't break anything.
 **Run the self-tests** — from the repo root: `python -m tests.test_extract` and
 `python -m tests.test_mirror`. Both workflows run them before doing anything.
 
-### Scheduling and DST
+### Scheduling, DST and idempotency
 
-GitHub cron is UTC only, so the workflow fires at both 05:00 and 06:00 UTC and
-`--check-hour` makes the wrong one exit immediately. You get 7:00 Paris all year
-without editing anything twice a year. Note that Actions cron can be delayed
-several minutes under load — if 7:00 sharp matters, move the cron 15 minutes
-earlier rather than expecting the minute to be exact.
+Three clocks can start the digest: the Worker (05:45 Paris, DST-aware, the one
+that matters), and four GitHub crons at 03:43–06:43 UTC as a safety net. None
+of them needs to know which one it is: before reading a single sheet, the job
+asks Slack whether a message with today's header (`📊 *DAILY OPS CHECK-IN* —
+dd/mm/yyyy`) is already in `#shortyshort` (and the food header in Jisoo's DM).
+If yes, it exits in one API call. The PDF `collect` does the same with the
+permalinks already in the reviewer's DM.
+
+This replaces the old `--check-hour` gate, which made a late-starting run
+"succeed" by doing nothing — the failure mode that went unnoticed for weeks.
 
 ## How failures behave
 
 | Situation | What happens |
 |---|---|
+| Run starts hours late (GitHub queue) | It still posts, unless an earlier trigger already did — then it exits "already posted" |
 | One sheet unreachable | `⚠️ NAME — error…` line in both digests; rest posts normally |
 | Sheet date isn't the target day (D-1) | `⚠️ NAME — la feuille indique 24/08/2026`; **numbers are not posted** |
 | A row was renamed in a sheet | Digest posts; a separate 🔧 alert lists the missing labels |
-| The whole job crashes | 🚨 alert with the traceback, so silence never means "all fine" |
+| The whole job crashes | 🚨 alert with the traceback to `ALERT_DESTINATION`, falling back to `OPS_DESTINATION` if unset |
 
 The staleness guard matters most. Without it, a manager who forgets to roll the
 date forward means yesterday's figures get republished this morning as today's —
@@ -128,16 +176,24 @@ carries her comments back.
 ```
 #bf-managers-pb ──PDF──► reviewer's DM ──she replies in thread──► back as a
                                                     threaded reply under the PDF
+
+she replies ──► Slack event ──► Cloudflare Worker ──► GitHub API ──► route (~30-60 s)
 ```
 
-`mirror_pdfs.py collect` — runs at 07:10, gathers the last 24h of PDFs and DMs
-one per restaurant to `REVIEWER_ID`, each with a permalink to the original.
+`mirror_pdfs.py collect` — started by the Worker at 05:45 Paris (fallback crons
+03:53–06:53 UTC), gathers the last 24h of PDFs and DMs one per restaurant to
+`REVIEWER_ID`, each with a permalink to the original. PDFs whose permalink is
+already in her DM are skipped, so repeated runs never send twice.
 
-`mirror_pdfs.py route` — runs on the third cron in `pdf-review.yml` (currently
-every 5 minutes, 07:00–11:59 UTC). Forwards her thread replies into the origin
-channel as replies under the manager's own PDF message. Change that cron line
-freely: anything that isn't one of the two `10 5`/`10 6` collect crons is
-treated as a route tick.
+`mirror_pdfs.py route` — **event-driven**. Slack calls the Worker the moment she
+posts a threaded reply, the Worker dispatches this workflow, and her comment
+lands in the manager's channel about 30–60 seconds later (almost all of that is
+GitHub booting a runner). Forwards her thread replies into the origin channel as
+replies under the manager's own PDF message.
+
+A `*/30 5-11 * * *` cron stays as a safety net for events Slack never delivered
+— it gives up after 3 retries — and for a Worker outage. Anything that is not
+the `53 3,4,5,6` collect cron is treated as a route tick.
 
 ### No server and no database
 
@@ -153,8 +209,9 @@ Two tricks avoid both:
 ### Extra Slack scopes for this half
 
 On top of `chat:write` and `im:write`: `groups:history` (read the private manager
-channels), `im:history` (read her DM thread), `files:read`, `files:write`,
-`reactions:write`, `reactions:read`, `users:read`.
+channels — also used by the digest to check `#shortyshort` before posting),
+`im:history` (read her DM thread, and Jisoo's DM for the same check),
+`files:read`, `files:write`, `reactions:write`, `reactions:read`, `users:read`.
 
 The bot must be `/invite`d into **all nine manager channels** — they're private.
 
@@ -162,7 +219,7 @@ The bot must be `/invite`d into **all nine manager channels** — they're privat
 
 | Name | Value |
 |---|---|
-| `REVIEWER_ID` | the reviewer's Slack user ID (`U…`) |
+| `REVIEWER_ID` | the reviewer's Slack user ID (`U…`) — also set it in `worker/wrangler.toml` |
 | `PDF_CHANNELS` | optional override, e.g. `PB=C0133HV2QSV,GB=GR3JU1HJ5,…` |
 
 Channel IDs for nine restaurants are already filled in as defaults

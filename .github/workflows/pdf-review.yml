@@ -1,8 +1,15 @@
 name: PDF review loop
 
 on:
+  # Started by the Cloudflare Worker in worker/ — on a Slack event the moment
+  # the reviewer replies (mode: route), and at 05:45 Paris (mode: collect).
   repository_dispatch:
     types: [run-cron-job]
+  # Fallback only, for when the Worker or Slack delivery is down. Both modes
+  # are idempotent, so these cost nothing when the Worker is working.
+  schedule:
+    - cron: "53 3,4,5,6 * * *"   # collect
+    - cron: "*/30 5-11 * * *"    # route
   workflow_dispatch:
     inputs:
       mode:
@@ -16,6 +23,9 @@ on:
         default: true
 
 concurrency:
+  # She can post several comments in a row. Let the running one finish; the
+  # newest queued run then scans the whole thread and picks up everything,
+  # which is why superseding a pending run loses nothing.
   group: pdf-review
   cancel-in-progress: false
 
@@ -38,16 +48,19 @@ jobs:
 
       - name: Decide mode
         id: m
+        env:
+          # Via env, never inlined into the script: client_payload is attacker-
+          # shaped input and `${{ }}` would paste it straight into bash.
+          PAYLOAD_MODE: ${{ github.event.client_payload.mode }}
+          CRON: ${{ github.event.schedule }}
+          COLLECT_CRON: "53 3,4,5,6 * * *"
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
             echo "dry=${{ inputs.dry_run && '--dry-run' || '' }}" >> "$GITHUB_OUTPUT"
           else
-            # Payload sent from Cloudflare repository_dispatch
-            PAYLOAD_MODE="${{ github.event.client_payload.mode }}"
-            
-            # Default to route if mode isn't explicitly 'collect'
-            if [ "$PAYLOAD_MODE" = "collect" ]; then
+            # Anything that is not explicitly collect is a route tick.
+            if [ "$PAYLOAD_MODE" = "collect" ] || [ "$CRON" = "$COLLECT_CRON" ]; then
               echo "mode=collect" >> "$GITHUB_OUTPUT"
             else
               echo "mode=route" >> "$GITHUB_OUTPUT"
@@ -59,6 +72,9 @@ jobs:
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           REVIEWER_ID: ${{ vars.REVIEWER_ID }}
+          # mirror_pdfs.py falls back to OPS_DESTINATION, so pass it: an alert
+          # with nowhere to go is how weeks of failures stayed invisible.
           ALERT_DESTINATION: ${{ vars.ALERT_DESTINATION }}
+          OPS_DESTINATION: ${{ vars.OPS_DESTINATION }}
           PDF_CHANNELS: ${{ vars.PDF_CHANNELS }}
         run: python mirror_pdfs.py ${{ steps.m.outputs.mode }} ${{ steps.m.outputs.dry }}

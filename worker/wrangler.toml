@@ -1,0 +1,24 @@
+# Deploy from this folder:
+#   npx wrangler login
+#   npx wrangler deploy
+#   npx wrangler secret put GITHUB_TOKEN          # fine-grained PAT, this repo,
+#                                                 # permission "Contents: R/W"
+#   npx wrangler secret put SLACK_SIGNING_SECRET  # Slack app → Basic Information
+#
+# `wrangler deploy` prints the Worker's URL — paste it into the Slack app under
+# Event Subscriptions → Request URL, then subscribe to the bot event `message.im`.
+name = "bao-dispatch"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+REPO = "Ops-Bao/daily_reports"
+DIGEST_HOUR_PARIS = "5"          # the morning dispatch fires at :45 of this Paris hour
+REVIEWER_ID = "U_CHANGE_ME"      # must match the REVIEWER_ID repo variable
+ROUTE_CRON = "*/30 5-11 * * *"   # must match the route cron in [triggers] below
+
+[triggers]
+# Cloudflare crons are UTC. The first two fire in every UTC hour that can be
+# 05:xx Paris; the code checks the Paris clock and one of them exits.
+# The third is only a safety net behind the Slack event trigger.
+crons = ["45 3 * * *", "45 4 * * *", "*/30 5-11 * * *"]

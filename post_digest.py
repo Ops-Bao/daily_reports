@@ -47,6 +47,29 @@ def _split(text: str, sep: str = "\n\n———\n\n") -> list:
     return out
 
 
+def _channel_for(destination: str) -> str:
+    """chat.postMessage accepts a user ID, conversations.history does not."""
+    return slack_api.open_dm(destination) if destination.startswith("U") else destination
+
+
+def contains_header(messages: list, header: str) -> bool:
+    return any(header in (m.get("text") or "") for m in messages)
+
+
+def already_posted(destination: str, header: str, hours: int = 36) -> bool:
+    """True if a message carrying `header` is already in the destination.
+
+    This is what makes the morning run idempotent. GitHub can start a scheduled
+    job hours late and both DST crons fire every day, so the job cannot know
+    from the clock whether it is the first one. Slack knows: if today's header
+    is already there, this run has nothing to add. Needs groups:history /
+    channels:history for the ops channel and im:history for the DM.
+    """
+    oldest = time.time() - hours * 3600
+    msgs = slack_api.history(_channel_for(destination), oldest=f"{oldest:.6f}")
+    return contains_header(msgs, header)
+
+
 def post(destination: str, text: str, dry_run: bool = False) -> list:
     """Post text to a channel ID or user ID. Returns the message timestamps."""
     if dry_run:

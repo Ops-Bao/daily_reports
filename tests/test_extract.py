@@ -10,6 +10,7 @@ import datetime as dt
 import extract_report as E
 import food_quality as F
 import overall_quality as O
+import post_digest as P
 import run_daily as R
 from config import Location
 from tests.test_fixture import GRID
@@ -100,6 +101,19 @@ def main():
     check("errored location flagged", "PETIT BAO TERNES" in ops, True)
     check("stale location excluded from body", ops.count("GROS BAO PARIS"), 1)
     check("food digest built", "RAPPORT QUALITÉ FOOD" in food, True)
+
+    print("idempotency key")
+    # The header is what a later run searches Slack for. If it drifts from
+    # what build_digests writes, every fallback cron posts a duplicate.
+    check("ops digest starts with its header", ops.startswith(R.ops_header(target)), True)
+    check("food digest starts with its header", food.startswith(R.food_header(target)), True)
+    check("headers differ per day",
+          R.ops_header(target) == R.ops_header(target - dt.timedelta(days=1)), False)
+    history = [{"text": "hello"}, {"text": ops[:200]}, {"text": ""}, {}]
+    check("today's header is found in history",
+          P.contains_header(history, R.ops_header(target)), True)
+    check("yesterday's header is not",
+          P.contains_header(history, R.ops_header(target - dt.timedelta(days=1))), False)
 
     print("empty-day handling")
     empty, _ = R.build_digests(

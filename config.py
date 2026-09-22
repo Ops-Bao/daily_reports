@@ -30,7 +30,6 @@ CONTROL_PANEL_ID = os.environ.get(
 # Fallbacks used only if the Control Panel omits the setting.
 DEFAULTS = {
     "sheet tab name": "Rapport Jour New",
-    "run hour (paris time)": "7",
 }
 
 
@@ -143,10 +142,3 @@ def load_config(service=None):
 
 def report_tab(settings) -> str:
     return settings.get("sheet tab name") or DEFAULTS["sheet tab name"]
-
-
-def run_hour(settings) -> int:
-    try:
-        return int(str(settings.get("run hour (paris time)")).strip())
-    except (TypeError, ValueError):
-        return 7

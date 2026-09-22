@@ -30,7 +30,7 @@ import slack_api
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
 
 REVIEWER_ID = os.environ.get("REVIEWER_ID", "")
-ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION", "")
+ALERT_DESTINATION = os.environ.get("ALERT_DESTINATION") or os.environ.get("OPS_DESTINATION", "")
 FORWARDED = "white_check_mark"
 
 # Restaurant code -> the manager channel its PDFs are posted in.
@@ -81,7 +81,18 @@ def collect(since_hours: int, dry_run: bool = False) -> list:
 
     oldest = (dt.datetime.now(tz=dt.timezone.utc)
               - dt.timedelta(hours=since_hours)).timestamp()
-    dm = None if dry_run else slack_api.open_dm(REVIEWER_ID)
+    dm = slack_api.open_dm(REVIEWER_ID)
+
+    # Idempotency: the permalink in each mirrored message says which original
+    # it came from. Anything already in her DM is skipped, so the job can run
+    # from several crons (and hours late) without sending a PDF twice.
+    seen_oldest = (dt.datetime.now(tz=dt.timezone.utc)
+                   - dt.timedelta(hours=since_hours + 24)).timestamp()
+    already = {
+        parse_permalink(m.get("text", ""))
+        for m in slack_api.history(dm, oldest=f"{seen_oldest:.6f}")
+    }
+    already.discard(None)
     sent = []
 
     for code, channel in channels().items():
@@ -111,6 +122,10 @@ def collect(since_hours: int, dry_run: bool = False) -> list:
         # previous day rather than the upload date.
         report_day = posted.date() - dt.timedelta(days=1 if posted.hour < 12 else 0)
         link = slack_api.permalink(channel, msg["ts"])
+        if (channel, msg["ts"]) in already:
+            print(f"  {code:5s} already sent — {link}")
+            sent.append((code, link))
+            continue
         caption = (
             f"*{code}* — rapport du {report_day:%d/%m/%Y} "
             f"(déposé à {posted:%H:%M})\n"
