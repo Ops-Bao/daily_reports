@@ -1,0 +1,31 @@
+# ============================================================================
+#  WORKFLOW: Ping test — proves the Worker → GitHub link works
+# ============================================================================
+#
+#  STARTED BY
+#    Opening https://daily-reports.<subdomain>.workers.dev/ping in a browser
+#    → Worker sends repository_dispatch, event "run-ping"
+#
+#  DOES
+#    Prints what it received. Posts nothing, touches nothing, needs no secrets.
+#    This is the skeleton of the whole system in 15 lines.
+# ============================================================================
+
+name: Ping test
+
+on:
+  repository_dispatch:
+    types: [run-ping]                # must match EVENT_PING in worker/src/index.js
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Say what arrived
+        env:
+          REASON: ${{ github.event.client_payload.reason }}
+          SENT_AT: ${{ github.event.client_payload.sentAt }}
+        run: |
+          echo "🎫 Ticket received from the Worker"
+          echo "   reason:  $REASON"
+          echo "   sent at: $SENT_AT"
