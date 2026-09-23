@@ -12,9 +12,8 @@
 #    1. Cloudflare Worker "daily-reports"
 #       → repository_dispatch, event "run-pdf-review", with client_payload.mode:
 #           "collect"  at 05:45 Paris
-#           "route"    the moment Hélène replies (Slack doorbell)
-#           "route"    every 30 min (Worker safety net)
-#    2. GitHub `schedule` below         (fallback if the Worker is down)
+#           "route"    the moment Hélène replies (Slack doorbell) — route's ONLY automatic trigger
+#    2. GitHub `schedule` below         (collect fallback if the Worker is down)
 #    3. You, by hand: Actions tab → PDF review loop → Run workflow
 #
 #  Both modes are idempotent: extra runs cost a minute, never a duplicate post.
@@ -33,9 +32,8 @@ on:
   repository_dispatch:
     types: [run-pdf-review]          # must match EVENT_PDF_REVIEW in worker/src/index.js
 
-  schedule:                          # fallback only — GitHub may start these hours late
-    - cron: "53 3,4,5,6 * * *"       # collect (must equal COLLECT_CRON below)
-    - cron: "*/30 5-11 * * *"        # route
+  schedule:                          # collect fallback only — GitHub may start it hours late
+    - cron: "53 3,4,5,6 * * *"       # no route cron on purpose: route runs on Hélène's replies only
 
   workflow_dispatch:                 # manual run from the Actions tab
     inputs:
@@ -83,18 +81,18 @@ jobs:
           # from outside and could otherwise inject bash commands.
           EVENT_NAME: ${{ github.event_name }}
           PAYLOAD_MODE: ${{ github.event.client_payload.mode }}
-          CRON: ${{ github.event.schedule }}
-          COLLECT_CRON: "53 3,4,5,6 * * *"
           MANUAL_MODE: ${{ inputs.mode }}
           MANUAL_DRY: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             MODE="$MANUAL_MODE"
             DRY="$MANUAL_DRY"
-          elif [ "$PAYLOAD_MODE" = "collect" ] || [ "$CRON" = "$COLLECT_CRON" ]; then
-            MODE="collect"; DRY=""
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            MODE="collect"; DRY=""        # the only schedule left is the collect fallback
+          elif [ "$PAYLOAD_MODE" = "collect" ] || [ "$PAYLOAD_MODE" = "route" ]; then
+            MODE="$PAYLOAD_MODE"; DRY=""  # sent by the Worker
           else
-            MODE="route"; DRY=""          # anything not explicitly collect is a route tick
+            echo "::error::Unknown mode '$PAYLOAD_MODE' from $EVENT_NAME"; exit 1
           fi
           echo "Trigger: $EVENT_NAME → mode: $MODE ${DRY:-(live)}"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"

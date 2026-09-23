@@ -42,11 +42,10 @@ WORKER_NAME = "daily-reports"        # must equal `name` above (used in logs and
 REPO = "Ops-Bao/daily_reports"
 DIGEST_HOUR_PARIS = "5"              # morning dispatch fires at :45 of this Paris hour
 REVIEWER_ID = "U043V696AAE"          # must equal GitHub repo variable REVIEWER_ID
-ROUTE_CRON = "*/30 5-11 * * *"       # must equal the third cron below, character for character
 
 [triggers]
 # Cloudflare crons are always UTC.
 #   "45 3 * * *"       = 05:45 Paris in summer  (04:45 in winter → code skips it)
 #   "45 4 * * *"       = 05:45 Paris in winter  (06:45 in summer → code skips it)
-#   "*/30 5-11 * * *"  = route safety net, every 30 min (backup for the Slack doorbell)
-crons = ["45 3 * * *", "45 4 * * *", "*/30 5-11 * * *"]
+# Route has NO cron: it only runs when Hélène replies (Slack → fetch()).
+crons = ["45 3 * * *", "45 4 * * *"]

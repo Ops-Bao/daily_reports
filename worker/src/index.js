@@ -12,7 +12,6 @@
 //  WHAT SENDS WHAT
 //    scheduled()  05:45 Paris ...... run-digest               → daily-digest.yml
 //                 05:45 Paris ...... run-pdf-review (collect) → pdf-review.yml
-//                 every 30 min ..... run-pdf-review (route)   → pdf-review.yml  (safety net)
 //    fetch()      Hélène replies ... run-pdf-review (route)   → pdf-review.yml
 //    fetch()      GET /health ...... checks secrets + GitHub access, sends nothing
 //
@@ -173,22 +172,16 @@ export default {
     return new Response("", { status: 200 });
   },
 
-  // Called by the crons in wrangler.toml.
+  // Called by the crons in wrangler.toml (morning only — route has no cron).
   async scheduled(event, env, ctx) {
-    // 1. Safety-net alarm → one route ticket, done.
-    if (event.cron === env.ROUTE_CRON) {
-      await dispatch(env, EVENT_PDF_REVIEW, { mode: "route", reason: "safety-net" });
-      return;
-    }
-
-    // 2. Morning alarm. Two UTC crons fire; only the one that is currently
+    // 1. Morning alarm. Two UTC crons fire; only the one that is currently
     //    the digest hour in Paris continues. DST needs no edits.
     if (parisHour() !== digestHour(env)) {
       console.log(`Paris hour ${parisHour()} — not ${digestHour(env)}, the other cron handles this.`);
       return;
     }
 
-    // 3. Send both morning tickets independently: if one fails, the other
+    // 2. Send both morning tickets independently: if one fails, the other
     //    still goes out. Then fail loudly so Cloudflare's logs show an error.
     const results = await Promise.allSettled([
       dispatch(env, EVENT_DIGEST, { reason: "morning" }),

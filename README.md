@@ -358,4 +358,26 @@ Cost: nine restaurants is a few thousand input tokens, so roughly a cent a day.
   before it is allowed into Slack. The two per-field hooks in the formatters
   (`summarize_general`, `filter_food_quality`) remain commented out.
 
+## Understanding workflow from Cloudflare to GitHub Actions for CI/CD:
+- My Worker is called on a cron schedule on Cloudflare and that ends up sending a HTTP request to my GITHUB via an API call. That request declenches the workflows via daily-digest.yml OR pdf-review.yml 
+- ake the word "collect":
 
+1️⃣ In index.js: the Worker writes it into the ticket → client_payload: { mode: "collect" }
+2️⃣ Over the internet: it travels inside the HTTP request to GitHub
+3️⃣ In pdf-review.yml: GitHub makes it available as github.event.client_payload.mode
+4️⃣ Still in the yml: the "Decide mode" step copies it into a variable → PAYLOAD_MODE: ${{ github.event.client_payload.mode }}
+5️⃣ In the bash script: if [ "$PAYLOAD_MODE" = "collect" ] → saves mode=collect as the step's output
+6️⃣ In the "Run" step: python mirror_pdfs.py ${{ steps.m.outputs.mode }} becomes python mirror_pdfs.py collect
+7️⃣ In Python: your script reads collect as its argument and does the collecting
+
+Each file just hands a value to the next. Reading the system = following those hand-offs.
+
+🔑 Who holds which key
+Key|	Stored in|	Used by| Opens|
+|---|---|---|---|
+|GITHUB_TOKEN |	Cloudflare Worker secrets|	the Worker	|GitHub's door|
+|SLACK_SIGNING_SECRET|	Cloudflare Worker secrets	|the Worker|	proves a request is really from Slack|
+|SLACK_BOT_TOKEN|	GitHub Secrets|	your Python	|Slack (to post)| 
+|GOOGLE_SERVICE_ACCOUNT_JSON	|GitHub Secrets|	your Python	|your Google Sheets|
+
+Rule of thumb: a key lives in the kitchen that uses it. The Worker never touches Slack posting or Google, so it doesn't need those keys.
