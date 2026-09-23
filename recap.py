@@ -65,6 +65,22 @@ def _share(part, whole):
     return part / whole * 100.0
 
 
+def channel_total(data, key):
+    """Day total for one revenue channel, as MIDI + SOIR.
+
+    The TOTAL column (H) is trustworthy on the CA HT row but not on the three
+    channel rows: measured across the nine sheets for 22/09, midi+soir
+    reconciles with CA HT to the cent for eight of them, while the H column
+    was out by thousands on the same eight. So the services are the source of
+    truth here, and H is only a fallback for a sheet that leaves them blank.
+    """
+    midi = _num(_get(data, ("finance", key), "midi"))
+    soir = _num(_get(data, ("finance", key), "soir"))
+    if midi is not None or soir is not None:
+        return (midi or 0.0) + (soir or 0.0)
+    return _num(_get(data, ("finance", key, "total")))
+
+
 # ---------------------------------------------------------------------------
 # Group overview
 # ---------------------------------------------------------------------------
@@ -72,9 +88,9 @@ def _share(part, whole):
 def totals(oks) -> dict:
     """Group aggregates. `oks` is [(loc, data), ...] for locations that parsed."""
     ca = [_get(d, ("finance", "ca_ht", "total")) for _, d in oks]
-    on = [_get(d, ("finance", "ca_ht_on_site", "total")) for _, d in oks]
-    ta = [_get(d, ("finance", "ca_ht_take_away", "total")) for _, d in oks]
-    de = [_get(d, ("finance", "ca_ht_delivery", "total")) for _, d in oks]
+    on = [channel_total(d, "ca_ht_on_site") for _, d in oks]
+    ta = [channel_total(d, "ca_ht_take_away") for _, d in oks]
+    de = [channel_total(d, "ca_ht_delivery") for _, d in oks]
     cov = [_get(d, ("covers", "on_site", "total")) for _, d in oks]
     wtd = [_get(d, ("finance", "ca_ht", "wtd")) for _, d in oks]
     wtd_prior = [_get(d, ("finance", "ca_ht", "wtd_prior")) for _, d in oks]
@@ -169,8 +185,13 @@ def _restaurant_block(loc, data, prose) -> str:
 
 # ---------------------------------------------------------------------------
 
-def header(target_date) -> str:
+def key(target_date) -> str:
+    """Emoji-free, for the already-posted check — see run_daily.ops_key."""
     return f"*RECAP QUOTIDIEN — BAO FAMILY* — {target_date:%d/%m/%Y}"
+
+
+def header(target_date) -> str:
+    return f"📋 {key(target_date)}"
 
 
 def build(results, target_date, prose=None) -> str:

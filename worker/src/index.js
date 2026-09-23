@@ -1,30 +1,37 @@
-// Cloudflare Worker — the clock and the doorbell for both pipelines.
+// ============================================================================
+//  CLOUDFLARE WORKER "daily-reports" — the alarm clock + doorbell
+// ============================================================================
 //
-// Why this exists at all: GitHub's own `schedule` event is low priority. In
-// September 2026 the 05:00 UTC cron was observed starting between 11:30 and
-// 13:20 Paris, days in a row. A run started through the API begins within
-// seconds, so the timing lives here and GitHub only does the work.
+//  This Worker does NOT do the real work. It only decides WHEN, then asks
+//  GitHub to run a workflow (repository_dispatch). GitHub does the work.
 //
-// Two entry points:
+//  Why: GitHub's own `schedule` trigger is low priority (in Sept 2026 the
+//  05:00 UTC cron started between 11:30 and 13:20 Paris). A run started
+//  through the API begins within seconds.
 //
-//   scheduled()  05:45 Paris — start the digest and the PDF collect.
-//                Also a slow route tick as a safety net (see below).
+//  WHAT SENDS WHAT
+//    scheduled()  05:45 Paris ...... run-digest               → daily-digest.yml
+//                 05:45 Paris ...... run-pdf-review (collect) → pdf-review.yml
+//                 every 30 min ..... run-pdf-review (route)   → pdf-review.yml  (safety net)
+//    fetch()      Hélène replies ... run-pdf-review (route)   → pdf-review.yml
+//    fetch()      GET /health ...... checks secrets + GitHub access, sends nothing
 //
-//   fetch()      Slack Events API. The moment the reviewer posts a threaded
-//                reply in her DM, Slack calls this and we start `route`
-//                immediately instead of waiting for the next tick.
-//
-// Everything downstream is idempotent (the digest looks for today's header in
-// Slack, collect skips permalinks already in her DM, route claims each reply
-// with a ✅ reaction), so firing twice is harmless and firing late still works.
+//  Everything downstream is idempotent (digest checks Slack for today's
+//  header, collect skips PDFs already in her DM, route marks each reply ✅),
+//  so firing twice is harmless and firing late still works.
+// ============================================================================
+
+// Event names. Each must match `types:` in the workflow it starts.
+const EVENT_DIGEST = "run-digest";          // → .github/workflows/daily-digest.yml
+const EVENT_PDF_REVIEW = "run-pdf-review";  // → .github/workflows/pdf-review.yml
 
 const enc = new TextEncoder();
 
-// --- GitHub -----------------------------------------------------------------
+// --- GitHub: send an order ticket --------------------------------------------
 
-/** Start a workflow via repository_dispatch. Needs a fine-grained PAT with
- *  "Contents: read and write" on this repo (NOT "Actions" — that permission is
- *  for the other dispatch endpoint). repository_dispatch always runs main. */
+/** Start a workflow via repository_dispatch.
+ *  Needs GITHUB_TOKEN = fine-grained PAT with "Contents: Read and write" on
+ *  this repo. repository_dispatch always runs the workflow file on `main`. */
 async function dispatch(env, eventType, payload = {}) {
   const res = await fetch(`https://api.github.com/repos/${env.REPO}/dispatches`, {
     method: "POST",
@@ -32,7 +39,7 @@ async function dispatch(env, eventType, payload = {}) {
       Authorization: `Bearer ${env.GITHUB_TOKEN}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
-      "User-Agent": "bao-dispatch",
+      "User-Agent": env.WORKER_NAME,   // GitHub rejects requests without one
     },
     body: JSON.stringify({ event_type: eventType, client_payload: payload }),
   });
@@ -42,7 +49,7 @@ async function dispatch(env, eventType, payload = {}) {
   console.log(`dispatched ${eventType} ${JSON.stringify(payload)}`);
 }
 
-// --- Slack request signing ---------------------------------------------------
+// --- Slack: check the doorbell is really Slack --------------------------------
 
 function timingSafeEqual(a, b) {
   if (a.length !== b.length) return false;
@@ -51,15 +58,12 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-/** Verify Slack's v0 signature over the RAW body.
- *
- *  Without this the Worker is an open endpoint: anyone who learns the URL could
- *  make it start workflows. The 5-minute timestamp window also stops a captured
- *  request from being replayed later. */
+/** Verify Slack's v0 signature over the RAW body. Without this, anyone who
+ *  learns the URL could start workflows. The 5-minute window stops replays. */
 async function verifySlack(request, rawBody, signingSecret) {
   const ts = request.headers.get("x-slack-request-timestamp");
   const sig = request.headers.get("x-slack-signature");
-  if (!ts || !sig) return false;
+  if (!ts || !sig || !signingSecret) return false;
   if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
 
   const key = await crypto.subtle.importKey(
@@ -71,12 +75,11 @@ async function verifySlack(request, rawBody, signingSecret) {
   return timingSafeEqual(expected, sig);
 }
 
-// --- Which Slack events are worth a run --------------------------------------
+// --- Slack: is this event a reply from Hélène? -------------------------------
 
-// Edits and deletions are not new comments; forwarding them would post her
-// text a second time. Everything else is let through: mirror_pdfs.route does
-// the authoritative filtering in Python, so a needless run is cheap while a
-// missed event loses a comment.
+// Edits and deletions are not new comments. Everything else is let through:
+// mirror_pdfs.py route does the real filtering, so a needless run is cheap
+// while a missed event loses a comment.
 const IGNORED_SUBTYPES = new Set(["message_changed", "message_deleted"]);
 
 function isReviewerReply(e, reviewerId) {
@@ -86,21 +89,65 @@ function isReviewerReply(e, reviewerId) {
     && e.user === reviewerId
     && !e.bot_id
     && !IGNORED_SUBTYPES.has(e.subtype)
-    // A threaded reply, not a new top-level DM: the parent carries the
-    // permalink that tells route where the comment belongs.
+    // Threaded reply only: the parent message tells route where it belongs.
     && !!e.thread_ts && e.thread_ts !== e.ts;
 }
 
-// --- Entry points -------------------------------------------------------------
+// --- Helpers -----------------------------------------------------------------
 
 const parisHour = () =>
   new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/Paris", hour: "2-digit", hour12: false,
   }).format(new Date());
 
+const digestHour = (env) => String(env.DIGEST_HOUR_PARIS).padStart(2, "0");
+
+// --- /health: make invisible failures visible --------------------------------
+
+async function health(env) {
+  const report = {
+    worker: env.WORKER_NAME,
+    repo: env.REPO,
+    parisHourNow: parisHour(),
+    morningDispatchAt: `${digestHour(env)}:45 Paris`,
+    sends: { digest: EVENT_DIGEST, pdfReview: EVENT_PDF_REVIEW },
+    bindings: {
+      GITHUB_TOKEN: Boolean(env.GITHUB_TOKEN),
+      SLACK_SIGNING_SECRET: Boolean(env.SLACK_SIGNING_SECRET),
+      REVIEWER_ID: Boolean(env.REVIEWER_ID),
+    },
+  };
+  if (env.GITHUB_TOKEN) {
+    // Same auth as dispatch(), read-only, so it has no side effects.
+    const res = await fetch(`https://api.github.com/repos/${env.REPO}`, {
+      headers: {
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": env.WORKER_NAME,
+      },
+    });
+    report.githubAuth = res.status;
+    report.githubAuthMeans = {
+      200: "token OK",
+      401: "token missing or invalid",
+      403: "token lacks Contents: Read and write",
+      404: "token not granted on this repo",
+    }[res.status] || "unexpected";
+  } else {
+    report.githubAuthMeans = "no GITHUB_TOKEN on this Worker — add it as a secret";
+  }
+  return new Response(JSON.stringify(report, null, 2),
+    { headers: { "Content-Type": "application/json" } });
+}
+
+// --- Entry points -------------------------------------------------------------
+
 export default {
+  // Called for every web request: /health, or Slack's doorbell.
   async fetch(request, env, ctx) {
-    if (request.method !== "POST") return new Response("bao-dispatch", { status: 200 });
+    if (new URL(request.url).pathname === "/health") return health(env);
+
+    if (request.method !== "POST") return new Response(env.WORKER_NAME, { status: 200 });
 
     const raw = await request.text();
     if (!await verifySlack(request, raw, env.SLACK_SIGNING_SECRET)) {
@@ -116,31 +163,38 @@ export default {
     }
 
     if (body.type === "event_callback" && isReviewerReply(body.event, env.REVIEWER_ID)) {
-      // Slack retries anything not answered within 3 seconds, and a retry would
-      // mean a second workflow run. Answer now, dispatch after.
+      // Slack retries anything not answered within 3 s (= a duplicate run).
+      // So: answer Slack now, send the ticket in the background.
       ctx.waitUntil(
-        dispatch(env, "run-cron-job", { mode: "route", reason: "slack-event" })
+        dispatch(env, EVENT_PDF_REVIEW, { mode: "route", reason: "slack-event" })
           .catch((err) => console.error(String(err))),
       );
     }
     return new Response("", { status: 200 });
   },
 
+  // Called by the crons in wrangler.toml.
   async scheduled(event, env, ctx) {
-    // Route safety net: only for events Slack never delivered (Worker cold at
-    // the wrong moment, Slack giving up after its 3 retries). Not the main path.
+    // 1. Safety-net alarm → one route ticket, done.
     if (event.cron === env.ROUTE_CRON) {
-      await dispatch(env, "run-cron-job", { mode: "route", reason: "safety-net" });
+      await dispatch(env, EVENT_PDF_REVIEW, { mode: "route", reason: "safety-net" });
       return;
     }
 
-    // Morning start. Both UTC crons fire year-round; only the one that is
-    // currently 05:xx in Paris does anything, so DST needs no edits.
-    if (parisHour() !== String(env.DIGEST_HOUR_PARIS).padStart(2, "0")) {
-      console.log(`Paris hour ${parisHour()} — the other cron handles this.`);
+    // 2. Morning alarm. Two UTC crons fire; only the one that is currently
+    //    the digest hour in Paris continues. DST needs no edits.
+    if (parisHour() !== digestHour(env)) {
+      console.log(`Paris hour ${parisHour()} — not ${digestHour(env)}, the other cron handles this.`);
       return;
     }
-    await dispatch(env, "run-digest", { reason: "morning" });
-    await dispatch(env, "run-cron-job", { mode: "collect", reason: "morning" });
+
+    // 3. Send both morning tickets independently: if one fails, the other
+    //    still goes out. Then fail loudly so Cloudflare's logs show an error.
+    const results = await Promise.allSettled([
+      dispatch(env, EVENT_DIGEST, { reason: "morning" }),
+      dispatch(env, EVENT_PDF_REVIEW, { mode: "collect", reason: "morning" }),
+    ]);
+    const failed = results.filter((r) => r.status === "rejected").map((r) => String(r.reason));
+    if (failed.length) throw new Error(`Morning dispatch failed: ${failed.join(" | ")}`);
   },
 };

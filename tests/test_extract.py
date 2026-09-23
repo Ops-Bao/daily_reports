@@ -143,12 +143,24 @@ def main():
     g = [r[:] for r in GRID]
     for r in g:
         if r[2] == "CA HT ON SITE":
-            r[7] = "718,18 €"          # the take-away total, as found in the wild
+            r[3] = "0,00 €"            # a service figure that stops adding up
     dd = E.extract(g)
-    check("a total that does not match its parts is flagged",
+    check("a split that does not add up to CA HT is flagged",
           any("Incohérence CA HT" in w for w in dd["_warnings"]), True)
     check("a consistent sheet is not flagged",
           any("Incohérence CA HT" in w for w in d["_warnings"]), False)
+
+    # The channels' own TOTAL column is unreliable in the real sheets, so it
+    # must not be what either the check or the recap reads.
+    g = [r[:] for r in GRID]
+    for r in g:
+        if r[2] in ("CA HT ON SITE", "CA HT TAKE AWAY", "CA HT DELIVERY"):
+            r[7] = "1,00 €"
+    dd = E.extract(g)
+    check("a wrong channel TOTAL column is ignored",
+          any("Incohérence CA HT" in w for w in dd["_warnings"]), False)
+    check("recap reads the services, not that column",
+          RC.channel_total(dd, "ca_ht_on_site"), 3414.77)
 
     print("recap arithmetic")
     # Two restaurants with figures chosen so every aggregate can be checked by
@@ -206,11 +218,28 @@ def main():
     check("food digest starts with its header", food.startswith(R.food_header(target)), True)
     check("headers differ per day",
           R.ops_header(target) == R.ops_header(target - dt.timedelta(days=1)), False)
-    history = [{"text": "hello"}, {"text": ops[:200]}, {"text": ""}, {}]
-    check("today's header is found in history",
-          P.contains_header(history, R.ops_header(target)), True)
-    check("yesterday's header is not",
-          P.contains_header(history, R.ops_header(target - dt.timedelta(days=1))), False)
+    # Slack rewrites a literal emoji to its shortcode, so history never
+    # contains the emoji we posted. Three duplicate digests went out on
+    # 23/09 because the key started with one.
+    as_slack_stores_it = ops.replace("📊", ":bar_chart:").replace("🍜", ":ramen:")
+    history = [{"text": "hello"}, {"text": as_slack_stores_it[:200]},
+               {"text": ""}, {}]
+    check("the key survives Slack's emoji rewriting",
+          P.contains_header(history, R.ops_key(target)), True)
+    check("yesterday's key is not found",
+          P.contains_header(history, R.ops_key(target - dt.timedelta(days=1))), False)
+    check("the displayed header still carries the emoji",
+          R.ops_header(target).startswith("📊"), True)
+    check("but the key does not", any(ord(c) > 0x2500 for c in R.ops_key(target)), False)
+    check("nor does the food key", any(ord(c) > 0x2500 for c in R.food_key(target)), False)
+    check("nor does the recap key", any(ord(c) > 0x2500 for c in RC.key(target)), False)
+
+    # And a key that did carry one must fail loudly rather than post twice.
+    try:
+        P.already_posted("C123", R.ops_header(target))
+        raise AssertionError("an emoji key should have been rejected")
+    except P.EmojiInKey:
+        print("  ok  an emoji in the key is rejected before any Slack call")
 
     print("empty-day handling")
     empty, _ = R.build_digests(

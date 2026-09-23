@@ -1,16 +1,43 @@
+# ============================================================================
+#  WORKFLOW: PDF review loop
+# ============================================================================
+#
+#  TWO MODES, ONE WORKFLOW
+#    collect  Gathers last night's PDFs from the 9 #bf-managers-* channels
+#             and sends them to Hélène's DM.
+#    route    Takes Hélène's threaded replies and posts them back on the
+#             original PDF in the right restaurant channel (marks each ✅).
+#
+#  STARTED BY
+#    1. Cloudflare Worker "daily-reports"
+#       → repository_dispatch, event "run-pdf-review", with client_payload.mode:
+#           "collect"  at 05:45 Paris
+#           "route"    the moment Hélène replies (Slack doorbell)
+#           "route"    every 30 min (Worker safety net)
+#    2. GitHub `schedule` below         (fallback if the Worker is down)
+#    3. You, by hand: Actions tab → PDF review loop → Run workflow
+#
+#  Both modes are idempotent: extra runs cost a minute, never a duplicate post.
+#
+#  NEEDS (GitHub → Settings → Secrets and variables → Actions)
+#    Secrets:   SLACK_BOT_TOKEN
+#    Variables: REVIEWER_ID (= U043V696AAE, same as worker/wrangler.toml),
+#               PDF_CHANNELS, OPS_DESTINATION, ALERT_DESTINATION
+#
+#  NOTE: repository_dispatch and schedule only run this file from `main`.
+# ============================================================================
+
 name: PDF review loop
 
 on:
-  # Started by the Cloudflare Worker in worker/ — on a Slack event the moment
-  # the reviewer replies (mode: route), and at 05:45 Paris (mode: collect).
   repository_dispatch:
-    types: [run-cron-job]
-  # Fallback only, for when the Worker or Slack delivery is down. Both modes
-  # are idempotent, so these cost nothing when the Worker is working.
-  schedule:
-    - cron: "53 3,4,5,6 * * *"   # collect
-    - cron: "*/30 5-11 * * *"    # route
-  workflow_dispatch:
+    types: [run-pdf-review]          # must match EVENT_PDF_REVIEW in worker/src/index.js
+
+  schedule:                          # fallback only — GitHub may start these hours late
+    - cron: "53 3,4,5,6 * * *"       # collect (must equal COLLECT_CRON below)
+    - cron: "*/30 5-11 * * *"        # route
+
+  workflow_dispatch:                 # manual run from the Actions tab
     inputs:
       mode:
         description: "What to run"
@@ -23,9 +50,8 @@ on:
         default: true
 
 concurrency:
-  # She can post several comments in a row. Let the running one finish; the
-  # newest queued run then scans the whole thread and picks up everything,
-  # which is why superseding a pending run loses nothing.
+  # Several replies in a row → runs queue up; the newest one scans the whole
+  # thread, so nothing is lost.
   group: pdf-review
   cancel-in-progress: false
 
@@ -34,46 +60,50 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Get the code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Install Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: Self-test
         run: python -m tests.test_mirror
 
+      # Works out "collect" or "route" from whichever trigger started this run.
       - name: Decide mode
         id: m
         env:
-          # Via env, never inlined into the script: client_payload is attacker-
-          # shaped input and `${{ }}` would paste it straight into bash.
+          # Passed via env, never pasted into the script: client_payload comes
+          # from outside and could otherwise inject bash commands.
+          EVENT_NAME: ${{ github.event_name }}
           PAYLOAD_MODE: ${{ github.event.client_payload.mode }}
           CRON: ${{ github.event.schedule }}
           COLLECT_CRON: "53 3,4,5,6 * * *"
+          MANUAL_MODE: ${{ inputs.mode }}
+          MANUAL_DRY: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
-            echo "dry=${{ inputs.dry_run && '--dry-run' || '' }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            MODE="$MANUAL_MODE"
+            DRY="$MANUAL_DRY"
+          elif [ "$PAYLOAD_MODE" = "collect" ] || [ "$CRON" = "$COLLECT_CRON" ]; then
+            MODE="collect"; DRY=""
           else
-            # Anything that is not explicitly collect is a route tick.
-            if [ "$PAYLOAD_MODE" = "collect" ] || [ "$CRON" = "$COLLECT_CRON" ]; then
-              echo "mode=collect" >> "$GITHUB_OUTPUT"
-            else
-              echo "mode=route" >> "$GITHUB_OUTPUT"
-            fi
-            echo "dry=" >> "$GITHUB_OUTPUT"
+            MODE="route"; DRY=""          # anything not explicitly collect is a route tick
           fi
+          echo "Trigger: $EVENT_NAME → mode: $MODE ${DRY:-(live)}"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "dry=$DRY"   >> "$GITHUB_OUTPUT"
 
       - name: Run
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           REVIEWER_ID: ${{ vars.REVIEWER_ID }}
-          # mirror_pdfs.py falls back to OPS_DESTINATION, so pass it: an alert
-          # with nowhere to go is how weeks of failures stayed invisible.
           ALERT_DESTINATION: ${{ vars.ALERT_DESTINATION }}
           OPS_DESTINATION: ${{ vars.OPS_DESTINATION }}
           PDF_CHANNELS: ${{ vars.PDF_CHANNELS }}

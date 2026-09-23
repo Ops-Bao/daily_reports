@@ -288,22 +288,24 @@ def extract(grid: list) -> dict:
         "_warnings": r._warnings,
     }
 
-    # CA HT must equal sur place + take away + livraison. When it does not, a
-    # TOTAL cell is stale or points at the wrong row — which is invisible in
-    # the digest (it only shows CA HT) but silently corrupts the recap's
-    # répartition. Found in the wild: two rows of one sheet sharing a total.
+    # CA HT must equal sur place + take away + livraison, each summed over the
+    # two services. Deliberately NOT the channels' own TOTAL column: that cell
+    # is unreliable across these sheets (see recap.channel_total), so comparing
+    # against it flagged eight of nine restaurants and meant nothing.
     fin = data["finance"]
-    parts = [fin[k]["total"] for k in
-             ("ca_ht_on_site", "ca_ht_take_away", "ca_ht_delivery")]
+    parts = []
+    for k in ("ca_ht_on_site", "ca_ht_take_away", "ca_ht_delivery"):
+        midi, soir = fin[k]["midi"], fin[k]["soir"]
+        parts.append(None if midi is None and soir is None
+                     else (midi or 0.0) + (soir or 0.0))
     whole = fin["ca_ht"]["total"]
-    # Only meaningful once the day is closed. Mid-service the TOTAL column is
-    # still 0 while the channel rows hold partial figures, which is normal and
-    # must not raise a warning.
+    # Only meaningful once the day is closed: mid-service SOIR is negative
+    # (it is computed as total minus midi) and nothing reconciles.
     if whole and all(p is not None for p in parts):
         if abs(sum(parts) - whole) > 0.5:
             data["_warnings"].append(
                 f"Incohérence CA HT: total {whole:.2f} ≠ sur place+TA+livraison "
-                f"{sum(parts):.2f} (une cellule TOTAL est fausse)")
+                f"{sum(parts):.2f}")
 
     return data
 

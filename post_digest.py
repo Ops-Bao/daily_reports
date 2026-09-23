@@ -63,6 +63,10 @@ def contains_header(messages: list, header: str) -> bool:
     return any(header in (m.get("text") or "") for m in messages)
 
 
+class EmojiInKey(ValueError):
+    """Raised when an idempotency key carries an emoji Slack would rewrite."""
+
+
 def already_posted(destination: str, header: str, hours: int = 36) -> bool:
     """True if a message carrying `header` is already in the destination.
 
@@ -72,6 +76,12 @@ def already_posted(destination: str, header: str, hours: int = 36) -> bool:
     is already there, this run has nothing to add. Needs groups:history /
     channels:history for the ops channel and im:history for the DM.
     """
+    # Guard the one mistake that makes this function silently useless: any
+    # non-ASCII character in the key is almost certainly an emoji, and Slack
+    # stores emoji as shortcodes, so the key would never match its own message.
+    if any(ord(c) > 0x2500 for c in header):
+        raise EmojiInKey(
+            f"idempotency key contains an emoji Slack will rewrite: {header!r}")
     oldest = time.time() - hours * 3600
     msgs = slack_api.history(_channel_for(destination), oldest=f"{oldest:.6f}")
     return contains_header(msgs, header)

@@ -92,12 +92,24 @@ def fetch_location(service, loc, tab, target_date):
     return data, "ok"
 
 
+# The key must contain NO emoji. Slack rewrites a literal emoji to its
+# shortcode (📊 becomes ":bar_chart:") in the stored message, so a key that
+# starts with one can never be found again in conversations.history — which
+# is exactly how three identical digests went out on 23/09.
+def ops_key(target_date) -> str:
+    return f"*DAILY OPS CHECK-IN* — {target_date:%d/%m/%Y}"
+
+
+def food_key(target_date) -> str:
+    return f"*RAPPORT QUALITÉ FOOD* — {target_date:%d/%m/%Y}"
+
+
 def ops_header(target_date) -> str:
-    return f"📊 *DAILY OPS CHECK-IN* — {target_date:%d/%m/%Y}"
+    return f"📊 {ops_key(target_date)}"
 
 
 def food_header(target_date) -> str:
-    return f"🥢 *RAPPORT QUALITÉ FOOD* — {target_date:%d/%m/%Y}"
+    return f"🥢 {food_key(target_date)}"
 
 
 def build_digests(results, target_date):
@@ -192,9 +204,9 @@ def main() -> int:
     # Keyed by name, not by destination: pointing both at the same channel
     # while testing would otherwise collapse the two into one and silently
     # drop the ops digest.
-    plan = [("recap", ops_dest, recap.header(target_date)),
-            ("ops", ops_dest, ops_header(target_date)),
-            ("food", food_dest, food_header(target_date))]
+    plan = [("recap", ops_dest, recap.key(target_date)),
+            ("ops", ops_dest, ops_key(target_date)),
+            ("food", food_dest, food_key(target_date))]
     if not args.dry_run and not args.force:
         plan = [p for p in plan if not post_digest.already_posted(p[1], p[2])]
         if not plan:

@@ -1,25 +1,47 @@
+# ============================================================================
+#  WORKFLOW: Daily digest
+# ============================================================================
+#
+#  STARTED BY
+#    1. Cloudflare Worker "daily-reports" at 05:45 Paris
+#       → repository_dispatch, event "run-digest"   (the real trigger)
+#    2. GitHub `schedule` below                      (fallback if the Worker is down)
+#    3. You, by hand: Actions tab → Daily digest → Run workflow
+#
+#  DOES
+#    Reads the 9 restaurant sheets → posts the ops + food-quality digests to Slack.
+#    Checks Slack for today's header first, so only ONE digest ever goes out,
+#    no matter how many triggers fire.
+#
+#  NEEDS (GitHub → Settings → Secrets and variables → Actions)
+#    Secrets:   GOOGLE_SERVICE_ACCOUNT_JSON, SLACK_BOT_TOKEN,
+#               ANTHROPIC_API_KEY (optional: no AI briefing without it)
+#    Variables: OPS_DESTINATION, FOOD_DESTINATION, ALERT_DESTINATION,
+#               ANTHROPIC_WORKSPACE_ID (optional)
+#
+#  NOTE: repository_dispatch and schedule only run this file from `main`.
+# ============================================================================
+
 name: Daily digest
 
 on:
-  # The real trigger: the Cloudflare Worker in worker/ dispatches this at
-  # 05:45 Paris. API-started runs begin within seconds, unlike `schedule`.
   repository_dispatch:
-    types: [run-digest]
-  # Fallback only. The job checks Slack for today's header before posting, so
-  # however many of these fire, exactly one digest goes out.
-  schedule:
-    - cron: "43 3 * * *"   # 05:43 Paris in summer / 04:43 in winter
-    - cron: "43 4 * * *"   # 06:43 / 05:43
-    - cron: "43 5 * * *"   # 07:43 / 06:43
-    - cron: "43 6 * * *"   # 08:43 / 07:43
-  workflow_dispatch:
+    types: [run-digest]              # must match EVENT_DIGEST in worker/src/index.js
+
+  schedule:                          # fallback only — GitHub may start these hours late
+    - cron: "43 3 * * *"             # 05:43 Paris summer / 04:43 winter
+    - cron: "43 4 * * *"             # 06:43 / 05:43
+    - cron: "43 5 * * *"             # 07:43 / 06:43
+    - cron: "43 6 * * *"             # 08:43 / 07:43
+
+  workflow_dispatch:                 # manual run from the Actions tab
     inputs:
       dry_run:
         description: "Print the digests instead of posting to Slack"
         type: boolean
         default: true
       date:
-        description: "Target date (YYYY-MM-DD), blank = yesterday (the report of the last closed day)"
+        description: "Target date (YYYY-MM-DD), blank = yesterday (last closed day)"
         type: string
         default: ""
       force:
@@ -36,8 +58,7 @@ on:
         default: false
 
 concurrency:
-  # Several triggers can overlap; never let two runs post twice.
-  group: daily-digest
+  group: daily-digest                # never two digest runs at once
   cancel-in-progress: false
 
 jobs:
@@ -45,17 +66,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Get the code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Install Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      # Fail before posting rather than after. If someone's edit broke the
-      # extractor, a silent N/A-filled digest is worse than no digest.
+      # Fail before posting, not after: a silent N/A-filled digest is worse than none.
       - name: Self-test
         run: python -m tests.test_extract
 
@@ -63,9 +86,7 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          # Optional: without it the digest posts with no AI briefing.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Only needed when the key is org-level rather than workspace-scoped.
           ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
           OPS_DESTINATION: ${{ vars.OPS_DESTINATION }}
           FOOD_DESTINATION: ${{ vars.FOOD_DESTINATION }}
